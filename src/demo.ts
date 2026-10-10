@@ -8,7 +8,10 @@ export function demoState(settings: State['settings']): State {
     { id: 'demo-design', title: 'Подготовить новый макет', notes: 'Уточнить композицию и проверить детали перед презентацией.', url: 'https://github.com/kotashovv/windows-island', deadline: deadline.toISOString(), priority: 'normal', source: 'Демо', status: 'running', createdAt, elapsed: 0, sessions: [], startedAt },
     { id: 'demo-review', title: 'Посмотреть изменения агента', notes: 'Проверить результат и оставить комментарии.', url: 'https://github.com/kotashovv/windows-island', deadline: '', priority: 'normal', source: 'Демо', status: 'todo', createdAt, elapsed: 0, sessions: [] },
     { id: 'demo-plan', title: 'Спланировать завтрашний день', notes: 'Собрать задачи со ссылками через MCP.', url: '', deadline: '', priority: 'low', source: 'Демо', status: 'todo', createdAt, elapsed: 0, sessions: [] }
-  ], notifications: [{ id: 'demo-notification', source: 'codex', appName: 'Codex', title: 'Изменения готовы', body: 'Можно посмотреть результат и продолжить работу.', status: 'completed', target: null, icon: '', createdAt, read: false }] };
+  ], notifications: [{ id: 'demo-notification', source: 'codex', appName: 'Codex', title: 'Изменения готовы', body: 'Можно посмотреть результат и продолжить работу.', status: 'completed', target: null, icon: '', createdAt, read: false },
+    {id:'demo-telegram-2',source:'telegram',appName:'Telegram',title:'Команда',body:'Новый макет готов к обсуждению.',status:'info',target:null,icon:'',createdAt,read:false},
+    {id:'demo-telegram-1',source:'telegram',appName:'Telegram',title:'Анна',body:'Материалы для встречи добавлены.',status:'info',target:null,icon:'',createdAt:new Date(Date.now()-180000).toISOString(),read:true}
+  ] };
 }
 export function demoWeather(city: string): Weather {
   const days = Array.from({ length: 7 }, (_, i) => {

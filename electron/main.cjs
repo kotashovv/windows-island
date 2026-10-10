@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, shell, dia
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
+const {execFile}=require('node:child_process');
 const { randomBytes } = require('node:crypto');
 const { createStore, dayKey, reportMarkdown } = require('./store.cjs');
 const {WindowsIntegration}=require('./windows.cjs');
@@ -119,6 +120,13 @@ ipcMain.handle('cities',(_,name)=>cities(name));
 ipcMain.handle('report',writeReport);
 ipcMain.handle('open',(_,url)=>{const parsed=new URL(url);if(!['https:','http:'].includes(parsed.protocol)) throw new Error('Недопустимая ссылка');return shell.openExternal(parsed.href);});
 ipcMain.handle('jump',async(_,value)=>{const target=validateTarget(value);if(!target)throw new Error('У сообщения нет перехода');if(target.url)return shell.openExternal(target.url);if(!await windows.focus(target.app))throw new Error('Не удалось активировать приложение. Откройте его или передайте точную ссылку на чат/проект.');});
+ipcMain.handle('media-control',(_,action,sourceId)=>windows.mediaControl(action,sourceId));
+ipcMain.handle('media-source',async(_,sourceId)=>{
+  if(!windows.media||sourceId!==windows.media.sourceId)throw new Error('Источник музыки изменился');
+  if(await windows.focusMedia(sourceId))return;
+  if(typeof sourceId==='string'&&sourceId.includes('!')&&/^[\w.!-]{1,300}$/.test(sourceId))return new Promise((resolve,reject)=>execFile('explorer.exe',[`shell:AppsFolder\\${sourceId}`],{windowsHide:true},error=>error?reject(new Error('Не удалось открыть источник музыки')):resolve(true)));
+  throw new Error('Не удалось открыть источник музыки. Возможно, окно плеера закрыто.');
+});
 ipcMain.handle('notification-settings',()=>shell.openExternal('ms-settings:notifications'));
 ipcMain.handle('mcp-config',mcpConfig);
 ipcMain.handle('copy-config',(_,text)=>clipboard.writeText(String(text)));

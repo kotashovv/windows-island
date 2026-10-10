@@ -24,3 +24,21 @@ test('Slack native toast parses text and safe jump; executable URLs are rejected
   const toast=notifications.parseWindowsToast(Buffer.from('<toast launch="slack://channel?id=42"><visual><text>Anna &amp; Team</text><text>Ready</text></visual></toast>'),'com.squirrel.slack.slack',42);
   assert.equal(toast.source,'slack');assert.equal(toast.title,'Anna & Team');assert.equal(toast.target.url,'slack://channel?id=42');assert.throws(()=>notifications.validateTarget({app:'codex',url:'file:///C:/cmd.exe'}));
 });
+
+test('dismissed notifications stay deduplicated, survive restart, and leave other groups intact',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'island-dismiss-'));
+  try{
+    const file=path.join(dir,'state.json');const store=storeModule.createStore(file);
+    const first=store.mutate('notification.add',{source:'telegram',body:'First',eventId:'telegram:1'}).notification;
+    const second=store.mutate('notification.add',{source:'telegram',body:'Second',eventId:'telegram:2'}).notification;
+    store.mutate('notification.add',{source:'codex',body:'Keep this'});
+    assert.equal(store.mutate('notifications.dismiss',{ids:[first.id,second.id]}),2);
+    assert.equal(store.read().notifications.length,1);
+    const restarted=storeModule.createStore(file);assert.equal(restarted.read().notifications.length,1);
+    assert.equal(restarted.mutate('notification.add',{source:'telegram',body:'First',eventId:'telegram:1'}).duplicate,true);
+    assert.equal(restarted.read().notifications.length,1);
+    assert.throws(()=>store.mutate('notifications.dismiss',{ids:'all'}));
+    const toast=notifications.parseWindowsToast(Buffer.from('<toast launch="tg://resolve?domain=example"><text>Telegram</text><text>Hello</text></toast>'),'TelegramDesktop.Telegram',1);
+    assert.equal(toast.source,'telegram');assert.equal(toast.target.url,'tg://resolve?domain=example');
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});

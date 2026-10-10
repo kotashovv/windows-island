@@ -4,7 +4,7 @@ const { randomUUID } = require('node:crypto');
 const {normalizeNotification,findDuplicate}=require('./notifications.cjs');
 
 const dayKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
-const defaults = () => ({ tasks: [], events: [], notifications:[], agentReports:[], settings: { city: 'Астрахань', latitude: 46.35, longitude: 48.04, startup: false, glass: true, autoContrast: true, quiet: false, greeting: true, nativeNotifications:true, islandOnly:true, hideFullscreen:true } });
+const defaults = () => ({ tasks: [], events: [], notifications:[], agentReports:[], settings: { city: 'Астрахань', latitude: 46.35, longitude: 48.04, startup: false, glass: true, autoContrast: true, quiet: false, greeting: true, nativeNotifications:true, islandOnly:true, hideFullscreen:true,systemNotifications:true,mediaControls:true } });
 function createStore(filename) {
   let data = defaults();
   if (fs.existsSync(filename)) {
@@ -30,6 +30,10 @@ function createStore(filename) {
     }
     if(action==='notification.read'){const item=data.notifications.find(n=>n.id===input.id);if(item)item.read=true;save();return item||null;}
     if(action==='notifications.read-all'){data.notifications.forEach(item=>item.read=true);save();return true;}
+    if(action==='notifications.dismiss'){
+      if(!Array.isArray(input.ids)||input.ids.length>300||input.ids.some(id=>typeof id!=='string'))throw new Error('Передайте идентификаторы уведомлений');
+      const ids=new Set(input.ids);let count=0;for(const item of data.notifications){if(ids.has(item.id)&&!item.dismissed){item.dismissed=true;item.read=true;count++;}}save();return count;
+    }
     if(action==='tasks.import'){
       if(!Array.isArray(input.tasks)||!input.tasks.length||input.tasks.length>100)throw new Error('Передайте список из 1–100 задач');
       const source=String(input.source||'ИИ').slice(0,100);const prepared=input.tasks.map(item=>({...item,title:requiredText(item.title,'название'),url:validateLink(item.url),deadline:validDate(item.deadline),source}));
@@ -60,13 +64,13 @@ function createStore(filename) {
     }
     if (action === 'event.delete') { data.events = data.events.filter(e => e.id !== input.id); save(); return true; }
     if (action === 'settings.update') {
-      for (const key of ['startup','glass','autoContrast','quiet','greeting','nativeNotifications','islandOnly','hideFullscreen']) if (typeof input[key] === 'boolean') data.settings[key] = input[key];
+      for (const key of ['startup','glass','autoContrast','quiet','greeting','nativeNotifications','islandOnly','hideFullscreen','systemNotifications','mediaControls']) if (typeof input[key] === 'boolean') data.settings[key] = input[key];
       if (typeof input.city === 'string' && Number.isFinite(input.latitude) && Number.isFinite(input.longitude) && Math.abs(input.latitude) <= 90 && Math.abs(input.longitude) <= 180) Object.assign(data.settings, { city: input.city.slice(0,100), latitude: input.latitude, longitude: input.longitude });
       save(); return data.settings;
     }
     throw new Error('Неизвестное действие');
   }
-  return { read: () => structuredClone(data), mutate };
+  return { read: () => ({...structuredClone(data),notifications:structuredClone(data.notifications.filter(item=>!item.dismissed))}), mutate };
 }
 function reportMarkdown(data, date = dayKey()) {
   const clean = text => String(text || '').replace(/[\r\n]+/g, ' ').replace(/[\[\]<>]/g, '');

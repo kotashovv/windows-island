@@ -11,9 +11,9 @@ async function request(action, input) {
   const response = await fetch(`${config.url}/${action ? 'action' : 'state'}`,{method:action?'POST':'GET',headers:{Authorization:`Bearer ${config.token}`,'Content-Type':'application/json'},...(action?{body:JSON.stringify({action,input})}:{}),signal:AbortSignal.timeout(20000)});
   const data=await response.json();if(!response.ok)throw new Error(data.error||'Island недоступен');return action?data.result:data;
 }
-const server = new McpServer({ name:'windows-island',version:'0.2.5' });
-const source=z.enum(['codex','claude','slack','vscode','cursor','island','other']);
-const target=z.object({app:z.enum(['codex','claude','slack','vscode','cursor']),url:z.string().max(4000).optional().describe('Optional exact IDE/chat deep link. Allowed: https, http, codex, claude, slack, vscode, cursor, jetbrains. Without URL, focus the running app.')});
+const server = new McpServer({ name:'windows-island',version:'0.3.0' });
+const source=z.enum(['codex','claude','slack','telegram','vscode','cursor','island','other']);
+const target=z.object({app:z.enum(['codex','claude','slack','telegram','vscode','cursor']),url:z.string().max(4000).optional().describe('Optional exact IDE/chat deep link. Allowed: https, http, codex, claude, slack, tg, vscode, cursor, jetbrains. Without URL, focus the running app.')});
 const taskInput={title:z.string().min(1).max(5000),notes:z.string().optional(),url:z.string().url().optional(),deadline:z.string().optional().describe('ISO 8601 date or date-time with timezone'),priority:z.enum(['high','normal','low']).optional(),externalId:z.string().max(200).optional()};
 const register=(name,description,schema,action)=>server.registerTool(name,{description,inputSchema:schema},async input=>{try{return {content:[{type:'text',text:JSON.stringify(await request(action,input),null,2)}]};}catch(error){return {isError:true,content:[{type:'text',text:error.message}]};}});
 register('island_get_day','Read tasks, calendar events and preferences. Inspect these before adding tasks to avoid duplicates.',{},undefined);

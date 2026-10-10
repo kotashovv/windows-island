@@ -23,6 +23,14 @@ class IslandBridge {
   [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hwnd,int command);
   [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
   [DllImport("user32.dll")] static extern bool AttachThreadInput(uint from,uint to,bool attach);
+  [StructLayout(LayoutKind.Sequential)] struct PowerStatus {public byte ACLineStatus,BatteryFlag,BatteryLifePercent,SystemStatus;public uint BatteryLifeTime,BatteryFullLifeTime;}
+  [DllImport("kernel32.dll")] static extern bool GetSystemPowerStatus(out PowerStatus status);
+  [DllImport("kernel32.dll",CharSet=CharSet.Unicode)] static extern int GetApplicationUserModelId(IntPtr process,ref uint length,StringBuilder appId);
+  [DllImport("wlanapi.dll")] static extern uint WlanOpenHandle(uint version,IntPtr reserved,out uint negotiated,out IntPtr handle);
+  [DllImport("wlanapi.dll")] static extern uint WlanEnumInterfaces(IntPtr handle,IntPtr reserved,out IntPtr list);
+  [DllImport("wlanapi.dll")] static extern uint WlanQueryInterface(IntPtr handle,ref Guid id,int opcode,IntPtr reserved,out uint size,out IntPtr data,out int valueType);
+  [DllImport("wlanapi.dll")] static extern uint WlanCloseHandle(IntPtr handle,IntPtr reserved);
+  [DllImport("wlanapi.dll")] static extern void WlanFreeMemory(IntPtr data);
   [DllImport("shell32.dll")] static extern int SHQueryUserNotificationState(out int state);
   static readonly JavaScriptSerializer Json=new JavaScriptSerializer();
   static readonly object Gate=new object();
@@ -30,8 +38,9 @@ class IslandBridge {
   static string BackupFile;
   static int ParentPid;
   static volatile bool Running=true;
-  static string[] Apps={"codex","claude","slack","vscode","cursor"};
-  static bool Supported(string id){return id.IndexOf('\\')<0&&id.IndexOf('/')<0&&((id.IndexOf("codex",StringComparison.OrdinalIgnoreCase)>=0&&id.IndexOf("runner",StringComparison.OrdinalIgnoreCase)<0)||(id.IndexOf("claude",StringComparison.OrdinalIgnoreCase)>=0&&id.IndexOf("ssh",StringComparison.OrdinalIgnoreCase)<0)||id.IndexOf("slack",StringComparison.OrdinalIgnoreCase)>=0);}
+  static string[] Apps={"codex","claude","slack","telegram","vscode","cursor"};
+  static string LastSystem="";
+  static bool Supported(string id){return id.IndexOf('\\')<0&&id.IndexOf('/')<0&&((id.IndexOf("codex",StringComparison.OrdinalIgnoreCase)>=0&&id.IndexOf("runner",StringComparison.OrdinalIgnoreCase)<0)||(id.IndexOf("claude",StringComparison.OrdinalIgnoreCase)>=0&&id.IndexOf("ssh",StringComparison.OrdinalIgnoreCase)<0)||id.IndexOf("slack",StringComparison.OrdinalIgnoreCase)>=0||id.IndexOf("telegram",StringComparison.OrdinalIgnoreCase)>=0);}
   static void Emit(object value){lock(Gate){Console.WriteLine(Json.Serialize(value));Console.Out.Flush();}}
   static void SaveBackup(){File.WriteAllText(BackupFile,Json.Serialize(Backup));}
   static void Banners(string[] ids,bool exclusive){
@@ -64,8 +73,9 @@ class IslandBridge {
     }
     return null;
   }
-  static bool FocusApp(string app){
-    using(var process=FindApp(app)){
+  static bool FocusApp(string app){return FocusProcess(FindApp(app));}
+  static bool FocusProcess(Process selected){
+    using(var process=selected){
       if(process==null)return false;
       IntPtr hwnd=process.MainWindowHandle;
       if(IsIconic(hwnd))ShowWindow(hwnd,9);
@@ -80,6 +90,44 @@ class IslandBridge {
         return GetForegroundWindow()==hwnd;
       }finally{if(attached)AttachThreadInput(currentThread,foregroundThread,false);}
     }
+  }
+  static Process FindMediaApp(string appId){
+    foreach(var process in Process.GetProcesses()){
+      try{
+        if(process.MainWindowHandle==IntPtr.Zero){process.Dispose();continue;}
+        uint length=0;GetApplicationUserModelId(process.Handle,ref length,null);
+        if(length>0&&length<1024){var id=new StringBuilder((int)length);if(GetApplicationUserModelId(process.Handle,ref length,id)==0&&id.ToString().Equals(appId,StringComparison.OrdinalIgnoreCase))return process;}
+        string name=process.ProcessName;
+        if(name.Equals(appId,StringComparison.OrdinalIgnoreCase)||(name+".exe").Equals(appId,StringComparison.OrdinalIgnoreCase))return process;
+      }catch{}
+      process.Dispose();
+    }
+    return null;
+  }
+  static object Wifi(){
+    IntPtr handle;uint version;
+    if(WlanOpenHandle(2,IntPtr.Zero,out version,out handle)!=0)return new {available=false,connected=false,name=""};
+    IntPtr list=IntPtr.Zero;
+    try{
+      if(WlanEnumInterfaces(handle,IntPtr.Zero,out list)!=0)return new {available=false,connected=false,name=""};
+      int count=Math.Min(32,Marshal.ReadInt32(list));
+      for(int i=0;i<count;i++){
+        IntPtr entry=IntPtr.Add(list,8+i*532);
+        if(Marshal.ReadInt32(entry,528)!=1)continue;
+        Guid id=(Guid)Marshal.PtrToStructure(entry,typeof(Guid));IntPtr data;uint size;int valueType;
+        if(WlanQueryInterface(handle,ref id,7,IntPtr.Zero,out size,out data,out valueType)!=0)return new {available=true,connected=true,name=""};
+        try{int length=Marshal.ReadInt32(data,520);if(size>=556&&length>=0&&length<=32){var bytes=new byte[length];Marshal.Copy(IntPtr.Add(data,524),bytes,0,length);return new {available=true,connected=true,name=Encoding.UTF8.GetString(bytes)};}}
+        finally{WlanFreeMemory(data);}
+        return new {available=true,connected=true,name=""};
+      }
+      return new {available=true,connected=false,name=""};
+    }finally{if(list!=IntPtr.Zero)WlanFreeMemory(list);WlanCloseHandle(handle,IntPtr.Zero);}
+  }
+  static void SystemSnapshot(){
+    PowerStatus power;object value=null;
+    if(GetSystemPowerStatus(out power))value=new {present=power.BatteryFlag!=255&&(power.BatteryFlag&128)==0,percent=power.BatteryLifePercent==255?(int?)null:power.BatteryLifePercent,plugged=power.ACLineStatus==255?(bool?)null:power.ACLineStatus==1,charging=(power.BatteryFlag&8)!=0};
+    var snapshot=new {type="system",power=value,wifi=Wifi()};string signature=Json.Serialize(snapshot);
+    if(signature!=LastSystem){LastSystem=signature;Emit(snapshot);}
   }
   static void Icons(){var paths=new Dictionary<string,string>();foreach(var app in Apps){var process=FindApp(app);if(process!=null){try{paths[app]=process.MainModule.FileName;}catch{}}}Emit(new {type="icons",paths=paths});}
   static bool Fullscreen(){
@@ -103,13 +151,14 @@ class IslandBridge {
     if(type=="banners"){var ids=(System.Collections.IEnumerable)input["apps"];var strings=new List<string>();foreach(var id in ids)strings.Add(Convert.ToString(id));Banners(strings.ToArray(),Convert.ToBoolean(input["exclusive"]));}
     if(type=="icons")Icons();
     if(type=="focus"){string app=Convert.ToString(input["app"]);bool ok=Array.IndexOf(Apps,app)>=0&&FocusApp(app);Emit(new {type="focus",id=input["id"],ok=ok});}
+    if(type=="focus-media"){bool ok=FocusProcess(FindMediaApp(Convert.ToString(input["appId"])));Emit(new {type="focus",id=input["id"],ok=ok});}
   }catch(Exception error){Emit(new {type="error",message=error.Message});}}}finally{Running=false;}}
   static void Main(string[] args){
     Console.OutputEncoding=new UTF8Encoding(false);Console.InputEncoding=new UTF8Encoding(false);
     ParentPid=args.Length>0?Int32.Parse(args[0]):0;string dir=args.Length>1?args[1]:Environment.CurrentDirectory;Directory.CreateDirectory(dir);BackupFile=Path.Combine(dir,"banner-backup.json");
     try{if(File.Exists(BackupFile))Backup=Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(BackupFile));Restore();
       var reader=new Thread(ReadCommands);reader.IsBackground=true;reader.Start();bool? previous=null;int ticks=0;Icons();
-      while(Running){try{bool value=Fullscreen();if(value!=previous){Emit(new {type="fullscreen",active=value});previous=value;}if(++ticks%60==0)Icons();}catch(Exception error){Emit(new {type="error",message=error.Message});}Thread.Sleep(250);}
+      while(Running){try{bool value=Fullscreen();if(value!=previous){Emit(new {type="fullscreen",active=value});previous=value;}if(ticks++%8==0)SystemSnapshot();if(ticks%60==0)Icons();}catch(Exception error){Emit(new {type="error",message=error.Message});}Thread.Sleep(250);}
     }finally{try{Restore();}catch{}}
   }
 }

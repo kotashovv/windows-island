@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('island', {
   report: () => ipcRenderer.invoke('report'),
   open: url => ipcRenderer.invoke('open', url),
   jump: target => ipcRenderer.invoke('jump',target),
+  mediaControl: (action,sourceId) => ipcRenderer.invoke('media-control',action,sourceId),
+  mediaSource: sourceId => ipcRenderer.invoke('media-source',sourceId),
   notificationSettings: () => ipcRenderer.invoke('notification-settings'),
   importCalendar: () => ipcRenderer.invoke('import-calendar'),
   mcpConfig: () => ipcRenderer.invoke('mcp-config'),
