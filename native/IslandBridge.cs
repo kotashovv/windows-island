@@ -19,7 +19,10 @@ class IslandBridge {
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint pid);
   [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hwnd);
   [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr hwnd);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hwnd);
   [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hwnd,int command);
+  [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] static extern bool AttachThreadInput(uint from,uint to,bool attach);
   [DllImport("shell32.dll")] static extern int SHQueryUserNotificationState(out int state);
   static readonly JavaScriptSerializer Json=new JavaScriptSerializer();
   static readonly object Gate=new object();
@@ -43,7 +46,41 @@ class IslandBridge {
   }
   static void Restore(){lock(Gate){foreach(var entry in Backup){using(RegistryKey key=Registry.CurrentUser.CreateSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings\\"+entry.Key)){if(entry.Value==null)key.DeleteValue("ShowBanner",false);else key.SetValue("ShowBanner",Convert.ToInt32(entry.Value),RegistryValueKind.DWord);}}Backup.Clear();SaveBackup();}Emit(new {type="banners",exclusive=false,count=0});}
   static string ProcessName(string app){return app=="vscode"?"Code":app;}
-  static Process FindApp(string app){foreach(var process in Process.GetProcessesByName(ProcessName(app))){try{if(process.MainWindowHandle!=IntPtr.Zero)return process;}catch{}}return null;}
+  // Codex Desktop uses ChatGPT.exe in the OpenAI.Codex package; codex.exe can be a windowless CLI.
+  static bool IsCodexDesktopPath(string file){
+    if(String.IsNullOrEmpty(file))return false;
+    string[] parts=file.Replace('/','\\').Split('\\');
+    foreach(string part in parts)if(part.StartsWith("OpenAI.Codex_",StringComparison.OrdinalIgnoreCase))return true;
+    return false;
+  }
+  static Process FindApp(string app){
+    string[] names=app=="codex"?new string[]{"ChatGPT","codex"}:new string[]{ProcessName(app)};
+    foreach(string name in names)foreach(var process in Process.GetProcessesByName(name)){
+      try{
+        if(process.MainWindowHandle==IntPtr.Zero){process.Dispose();continue;}
+        if(app=="codex"&&name=="ChatGPT"&&!IsCodexDesktopPath(process.MainModule.FileName)){process.Dispose();continue;}
+        return process;
+      }catch{process.Dispose();}
+    }
+    return null;
+  }
+  static bool FocusApp(string app){
+    using(var process=FindApp(app)){
+      if(process==null)return false;
+      IntPtr hwnd=process.MainWindowHandle;
+      if(IsIconic(hwnd))ShowWindow(hwnd,9);
+      SetForegroundWindow(hwnd);
+      if(GetForegroundWindow()==hwnd)return true;
+      // The native bridge is a separate process from the window receiving the user's click.
+      uint pid;uint foregroundThread=GetWindowThreadProcessId(GetForegroundWindow(),out pid);
+      uint currentThread=GetCurrentThreadId();bool attached=false;
+      try{
+        if(foregroundThread!=0&&foregroundThread!=currentThread)attached=AttachThreadInput(currentThread,foregroundThread,true);
+        SetForegroundWindow(hwnd);
+        return GetForegroundWindow()==hwnd;
+      }finally{if(attached)AttachThreadInput(currentThread,foregroundThread,false);}
+    }
+  }
   static void Icons(){var paths=new Dictionary<string,string>();foreach(var app in Apps){var process=FindApp(app);if(process!=null){try{paths[app]=process.MainModule.FileName;}catch{}}}Emit(new {type="icons",paths=paths});}
   static bool Fullscreen(){
     int state;bool known=SHQueryUserNotificationState(out state)==0;if(known&&state==1)return true;
@@ -65,7 +102,7 @@ class IslandBridge {
     if(type=="shutdown"){Running=false;break;}
     if(type=="banners"){var ids=(System.Collections.IEnumerable)input["apps"];var strings=new List<string>();foreach(var id in ids)strings.Add(Convert.ToString(id));Banners(strings.ToArray(),Convert.ToBoolean(input["exclusive"]));}
     if(type=="icons")Icons();
-    if(type=="focus"){string app=Convert.ToString(input["app"]);bool supported=Array.IndexOf(Apps,app)>=0;var process=supported?FindApp(app):null;bool ok=false;if(process!=null){ShowWindow(process.MainWindowHandle,9);ok=SetForegroundWindow(process.MainWindowHandle);}Emit(new {type="focus",id=input["id"],ok=ok});}
+    if(type=="focus"){string app=Convert.ToString(input["app"]);bool ok=Array.IndexOf(Apps,app)>=0&&FocusApp(app);Emit(new {type="focus",id=input["id"],ok=ok});}
   }catch(Exception error){Emit(new {type="error",message=error.Message});}}}finally{Running=false;}}
   static void Main(string[] args){
     Console.OutputEncoding=new UTF8Encoding(false);Console.InputEncoding=new UTF8Encoding(false);

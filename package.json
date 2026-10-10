@@ -1,6 +1,6 @@
 {
   "name": "windows-island",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "A quiet, beautifully animated desktop island for Windows",
   "type": "module",
   "main": "electron/main.cjs",
@@ -15,6 +15,7 @@
     "dist": "npm run build && electron-builder --win portable",
     "test": "node --test tests/*.test.mjs",
     "test:smoke": "node tests/smoke.mjs",
+    "test:native-focus": "npm run build:native && powershell -NoProfile -ExecutionPolicy Bypass -File tests/native-focus.ps1",
     "mcp": "node mcp/server.mjs",
     "build:demo": "node scripts/build-demo.mjs",
     "capture:demo": "node scripts/capture-demo.mjs"
