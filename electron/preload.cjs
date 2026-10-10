@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('island', {
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
   restartUpdate: () => ipcRenderer.invoke('restart-update'),
   cities: name => ipcRenderer.invoke('cities', name),
+  chooseReportFolder: () => ipcRenderer.invoke('report-folder'),
   report: () => ipcRenderer.invoke('report'),
   open: url => ipcRenderer.invoke('open', url),
   jump: target => ipcRenderer.invoke('jump',target),
@@ -21,7 +22,7 @@ contextBridge.exposeInMainWorld('island', {
   copyConfig: text => ipcRenderer.invoke('copy-config', text),
   contextMenu: () => ipcRenderer.send('capsule-menu'),
   on: (channel, callback) => {
-    if (!['state','notification','contrast','expand','overlay-blocked','update-progress'].includes(channel)) return () => {};
+    if (!['state','runtime','notification','contrast','expand','overlay-blocked','update-progress'].includes(channel)) return () => {};
     const listener = (_, data) => callback(data); ipcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);
   }

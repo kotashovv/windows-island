@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Web.Script.Serialization;
+using System.Net.NetworkInformation;
 using Microsoft.Win32;
 
 class IslandBridge {
@@ -41,7 +42,17 @@ class IslandBridge {
   static string[] Apps={"codex","claude","slack","telegram","vscode","cursor"};
   static string LastSystem="";
   static bool Supported(string id){return id.IndexOf('\\')<0&&id.IndexOf('/')<0&&((id.IndexOf("codex",StringComparison.OrdinalIgnoreCase)>=0&&id.IndexOf("runner",StringComparison.OrdinalIgnoreCase)<0)||(id.IndexOf("claude",StringComparison.OrdinalIgnoreCase)>=0&&id.IndexOf("ssh",StringComparison.OrdinalIgnoreCase)<0)||id.IndexOf("slack",StringComparison.OrdinalIgnoreCase)>=0||id.IndexOf("telegram",StringComparison.OrdinalIgnoreCase)>=0);}
-  static void Emit(object value){lock(Gate){Console.WriteLine(Json.Serialize(value));Console.Out.Flush();}}
+  internal static bool IsRunning {get{return Running;}}
+  internal static string Serialize(object value){lock(Gate){return Json.Serialize(value);}}
+  internal static void Emit(object value){lock(Gate){Console.WriteLine(Json.Serialize(value));Console.Out.Flush();}}
+  static volatile bool SystemEnabled=true,VpnEnabled=true,PowerEnabled=true,WifiEnabled=true,FullscreenEnabled=true;
+  static object Vpn(){
+    try{var names=new List<string>();foreach(var adapter in NetworkInterface.GetAllNetworkInterfaces()){
+      if(adapter.OperationalStatus!=OperationalStatus.Up)continue;
+      string description=adapter.Description.ToLowerInvariant();bool vpn=adapter.NetworkInterfaceType==NetworkInterfaceType.Ppp||description.Contains("wireguard")||description.Contains("wintun")||description.Contains("openvpn")||description.Contains("tap-windows")||description.Contains("tailscale")||description.Contains("zerotier")||description.Contains("fortinet")||description.Contains("anyconnect")||description.Contains("nordlynx");
+      if(vpn&&adapter.GetIPProperties().UnicastAddresses.Count>0)names.Add(adapter.Name);
+    }names.Sort();return new {available=true,connected=names.Count>0,name=String.Join(", ",names.ToArray())};}catch{return new {available=false,connected=false,name=""};}
+  }
   static void SaveBackup(){File.WriteAllText(BackupFile,Json.Serialize(Backup));}
   static void Banners(string[] ids,bool exclusive){
     if(!exclusive){Restore();return;}
@@ -125,16 +136,16 @@ class IslandBridge {
   }
   static void SystemSnapshot(){
     PowerStatus power;object value=null;
-    if(GetSystemPowerStatus(out power))value=new {present=power.BatteryFlag!=255&&(power.BatteryFlag&128)==0,percent=power.BatteryLifePercent==255?(int?)null:power.BatteryLifePercent,plugged=power.ACLineStatus==255?(bool?)null:power.ACLineStatus==1,charging=(power.BatteryFlag&8)!=0};
-    var snapshot=new {type="system",power=value,wifi=Wifi()};string signature=Json.Serialize(snapshot);
+    if(PowerEnabled&&GetSystemPowerStatus(out power))value=new {present=power.BatteryFlag!=255&&(power.BatteryFlag&128)==0,percent=power.BatteryLifePercent==255?(int?)null:power.BatteryLifePercent,plugged=power.ACLineStatus==255?(bool?)null:power.ACLineStatus==1,charging=(power.BatteryFlag&8)!=0};
+    var snapshot=new {type="system",power=value,wifi=SystemEnabled&&WifiEnabled?Wifi():null,vpn=VpnEnabled?Vpn():null};string signature=Serialize(snapshot);
     if(signature!=LastSystem){LastSystem=signature;Emit(snapshot);}
   }
-  static void Icons(){var paths=new Dictionary<string,string>();foreach(var app in Apps){var process=FindApp(app);if(process!=null){try{paths[app]=process.MainModule.FileName;}catch{}}}Emit(new {type="icons",paths=paths});}
+  static void Icons(){var paths=new Dictionary<string,string>();foreach(var app in Apps){using(var process=FindApp(app)){if(process!=null){try{paths[app]=process.MainModule.FileName;}catch{}}}}Emit(new {type="icons",paths=paths});}
   static bool Fullscreen(){
     int state;bool known=SHQueryUserNotificationState(out state)==0;if(known&&state==1)return true;
     IntPtr hwnd=GetForegroundWindow();if(hwnd==IntPtr.Zero)return false;
     uint pid;GetWindowThreadProcessId(hwnd,out pid);if(pid==ParentPid)return false;
-    try{string name=Process.GetProcessById((int)pid).ProcessName;if(name.Equals("explorer",StringComparison.OrdinalIgnoreCase))return false;}catch{}
+    try{using(var process=Process.GetProcessById((int)pid)){if(process.ProcessName.Equals("explorer",StringComparison.OrdinalIgnoreCase))return false;}}catch{}
     Rect rect;if(!GetWindowRect(hwnd,out rect))return false;
     MonitorInfo info=new MonitorInfo();info.Size=Marshal.SizeOf(typeof(MonitorInfo));if(!GetMonitorInfo(MonitorFromWindow(hwnd,2),ref info))return false;
     // Island currently lives on the primary monitor. A fullscreen window elsewhere must not hide it.
@@ -148,17 +159,21 @@ class IslandBridge {
   static void ReadCommands(){try{string line;while(Running&&(line=Console.ReadLine())!=null){try{
     var input=Json.Deserialize<Dictionary<string,object>>(line);string type=Convert.ToString(input["type"]);
     if(type=="shutdown"){Running=false;break;}
+    if(type=="configure"){PowerEnabled=!input.ContainsKey("power")||Convert.ToBoolean(input["power"]);WifiEnabled=!input.ContainsKey("wifi")||Convert.ToBoolean(input["wifi"]);FullscreenEnabled=!input.ContainsKey("fullscreen")||Convert.ToBoolean(input["fullscreen"]);SystemEnabled=Convert.ToBoolean(input["system"]);VpnEnabled=Convert.ToBoolean(input["vpn"]);MediaBridge.Enabled=Convert.ToBoolean(input["media"]);LastSystem="";}
+    if(type=="media-control")MediaBridge.Queue(input);
     if(type=="banners"){var ids=(System.Collections.IEnumerable)input["apps"];var strings=new List<string>();foreach(var id in ids)strings.Add(Convert.ToString(id));Banners(strings.ToArray(),Convert.ToBoolean(input["exclusive"]));}
     if(type=="icons")Icons();
     if(type=="focus"){string app=Convert.ToString(input["app"]);bool ok=Array.IndexOf(Apps,app)>=0&&FocusApp(app);Emit(new {type="focus",id=input["id"],ok=ok});}
     if(type=="focus-media"){bool ok=FocusProcess(FindMediaApp(Convert.ToString(input["appId"])));Emit(new {type="focus",id=input["id"],ok=ok});}
   }catch(Exception error){Emit(new {type="error",message=error.Message});}}}finally{Running=false;}}
   static void Main(string[] args){
-    Console.OutputEncoding=new UTF8Encoding(false);Console.InputEncoding=new UTF8Encoding(false);
+    // Explicit redirected streams work without allocating a Windows console host.
+    Console.SetOut(new StreamWriter(Console.OpenStandardOutput(),new UTF8Encoding(false)){AutoFlush=true});
+    Console.SetIn(new StreamReader(Console.OpenStandardInput(),new UTF8Encoding(false)));
     ParentPid=args.Length>0?Int32.Parse(args[0]):0;string dir=args.Length>1?args[1]:Environment.CurrentDirectory;Directory.CreateDirectory(dir);BackupFile=Path.Combine(dir,"banner-backup.json");
     try{if(File.Exists(BackupFile))Backup=Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(BackupFile));Restore();
-      var reader=new Thread(ReadCommands);reader.IsBackground=true;reader.Start();bool? previous=null;int ticks=0;Icons();
-      while(Running){try{bool value=Fullscreen();if(value!=previous){Emit(new {type="fullscreen",active=value});previous=value;}if(ticks++%8==0)SystemSnapshot();if(ticks%60==0)Icons();}catch(Exception error){Emit(new {type="error",message=error.Message});}Thread.Sleep(250);}
+      var reader=new Thread(ReadCommands);reader.IsBackground=true;reader.Start();var media=new Thread(MediaBridge.Run);media.IsBackground=true;media.Start();bool? previous=null;int ticks=0;Icons();
+      while(Running){try{bool value=FullscreenEnabled&&Fullscreen();if(value!=previous){Emit(new {type="fullscreen",active=value});previous=value;}if(ticks++%8==0&&(SystemEnabled||VpnEnabled))SystemSnapshot();if(ticks%60==0){if(ParentPid>0){try{using(var parent=Process.GetProcessById(ParentPid)){if(parent.HasExited){Running=false;break;}}}catch(ArgumentException){Running=false;break;}}Icons();}}catch(Exception error){Emit(new {type="error",message=error.Message});}Thread.Sleep(250);}
     }finally{try{Restore();}catch{}}
   }
 }

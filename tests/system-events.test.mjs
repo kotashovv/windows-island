@@ -19,3 +19,13 @@ test('desktop or unavailable battery does not emit low-charge notifications',()=
   const events=[];const system=new SystemEvents(item=>events.push(item));
   system.update({power:{present:false,percent:0,plugged:true},wifi:{available:false}});system.update({power:{present:true,percent:null,plugged:null},wifi:{available:false}});assert.equal(events.length,0);
 });
+test('VPN baseline and repeated snapshots are silent; connect, switch and disconnect are transient',()=>{
+  const events=[],system=new SystemEvents(item=>events.push(item));const update=(connected,name='')=>system.update({...snapshot(),vpn:{available:true,connected,name}});
+  update(false);update(false);assert.equal(events.length,0);update(true,'WireGuard');update(true,'WireGuard');update(true,'Work VPN');update(false);
+  assert.deepEqual(events.map(e=>e.kind),['vpn-connected','vpn-connected','vpn-disconnected']);assert.ok(events.every(e=>e.transport==='system'));assert.equal(events[0].appName,'VPN');
+  system.update({...snapshot(),vpn:null});update(true,'Work VPN');assert.equal(events.length,3,'re-enabling the monitor starts with a silent baseline');
+});
+test('charging and unplugging include the real battery percentage for the capsule fill',()=>{
+  const events=[],system=new SystemEvents(item=>events.push(item));system.update(snapshot(63,false));system.update(snapshot(63,true));system.update(snapshot(64,false));
+  assert.deepEqual(events.map(e=>[e.kind,e.chargePercent]),[['charging',63],['unplugged',64]]);
+});

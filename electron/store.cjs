@@ -1,10 +1,11 @@
+const {translate}=require('./locale.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const {normalizeNotification,findDuplicate}=require('./notifications.cjs');
 
 const dayKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
-const defaults = () => ({ tasks: [], events: [], notifications:[], agentReports:[], settings: { city: 'Астрахань', latitude: 46.35, longitude: 48.04, startup: false, glass: true, autoContrast: true, quiet: false, greeting: true, nativeNotifications:true, islandOnly:true, hideFullscreen:true,systemNotifications:true,mediaControls:true } });
+const defaults = () => ({ tasks: [], events: [], notifications:[], agentReports:[], settings: { language:'ru',reportFolder:'',tasksEnabled:true,weatherEnabled:true,batteryNotifications:true,wifiNotifications:true,vpnNotifications:true,city: 'Астрахань', latitude: 46.35, longitude: 48.04, startup: false, glass: true, autoContrast: true, quiet: false, greeting: true, nativeNotifications:true, islandOnly:true, hideFullscreen:true,systemNotifications:true,mediaControls:true } });
 function createStore(filename) {
   let data = defaults();
   if (fs.existsSync(filename)) {
@@ -16,11 +17,13 @@ function createStore(filename) {
   const validateLink = value => { if (!value) return ''; const url = new URL(value); if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Ссылка должна начинаться с https:// или http://'); return url.href; };
   const validDate = value => { if (!value) return ''; if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) throw new Error('Некорректная дата'); return value; };
   function mutate(action, input = {}) {
+    if((action.startsWith('task.')||action==='tasks.import')&&data.settings.tasksEnabled===false)throw new Error('Функция задач отключена в настройках');
     if(action==='notification.add'||action==='agent.report'){
       const item=normalizeNotification(input);const duplicate=findDuplicate(data.notifications,item);
       if(duplicate&&(action!=='agent.report'||data.agentReports.some(report=>report.id===duplicate.id)))return {accepted:false,duplicate:true,notification:duplicate};
       if(action==='agent.report'){
         if(!['completed','needs_input','failed'].includes(item.status))throw new Error('Укажите статус отчёта агента');
+        if(item.taskId&&data.settings.tasksEnabled===false)throw new Error('Функция задач отключена в настройках');
         const task=item.taskId?data.tasks.find(t=>t.id===item.taskId):null;if(item.taskId&&!task)throw new Error('Задача отчёта не найдена');
         if(task){if(task.status==='running'){const end=Date.now();task.elapsed+=Math.max(0,end-Date.parse(task.startedAt));task.sessions.push({start:task.startedAt,end:new Date(end).toISOString()});delete task.startedAt;}task.status=item.status==='completed'?'done':'needs_input';if(item.status==='completed')task.completedAt=item.createdAt;else delete task.completedAt;}
         data.agentReports.unshift({id:duplicate?.id||item.id,source:item.source,taskId:item.taskId,status:item.status,summary:item.body,title:item.title,target:item.target,createdAt:item.createdAt});data.agentReports=data.agentReports.slice(0,1000);
@@ -64,8 +67,13 @@ function createStore(filename) {
     }
     if (action === 'event.delete') { data.events = data.events.filter(e => e.id !== input.id); save(); return true; }
     if (action === 'settings.update') {
-      for (const key of ['startup','glass','autoContrast','quiet','greeting','nativeNotifications','islandOnly','hideFullscreen','systemNotifications','mediaControls']) if (typeof input[key] === 'boolean') data.settings[key] = input[key];
+      if(input.language!==undefined&&!['ru','en'].includes(input.language))throw new Error('Неподдерживаемый язык');
+      if(input.reportFolder!==undefined&&(typeof input.reportFolder!=='string'||input.reportFolder.length>3000||input.reportFolder.includes('\0')||(input.reportFolder&&!path.isAbsolute(input.reportFolder))))throw new Error('Укажите абсолютный путь к папке отчётов');
+      for (const key of ['startup','glass','autoContrast','quiet','greeting','nativeNotifications','islandOnly','hideFullscreen','systemNotifications','mediaControls','tasksEnabled','weatherEnabled','batteryNotifications','wifiNotifications','vpnNotifications']) if (typeof input[key] === 'boolean') data.settings[key] = input[key];
       if (typeof input.city === 'string' && Number.isFinite(input.latitude) && Number.isFinite(input.longitude) && Math.abs(input.latitude) <= 90 && Math.abs(input.longitude) <= 180) Object.assign(data.settings, { city: input.city.slice(0,100), latitude: input.latitude, longitude: input.longitude });
+      if(input.language!==undefined){if(!['ru','en'].includes(input.language))throw new Error('Неподдерживаемый язык');data.settings.language=input.language;}
+      if(input.reportFolder!==undefined){if(typeof input.reportFolder!=='string'||input.reportFolder.length>3000||input.reportFolder.includes('\0')||(input.reportFolder&&!path.isAbsolute(input.reportFolder)))throw new Error('Укажите абсолютный путь к папке отчётов');data.settings.reportFolder=input.reportFolder;}
+      if(data.settings.tasksEnabled===false)for(const task of data.tasks)if(task.status==='running'){const end=Date.now();task.elapsed+=Math.max(0,end-Date.parse(task.startedAt));task.sessions.push({start:task.startedAt,end:new Date(end).toISOString()});delete task.startedAt;task.status='todo';}
       save(); return data.settings;
     }
     throw new Error('Неизвестное действие');
@@ -73,10 +81,11 @@ function createStore(filename) {
   return { read: () => ({...structuredClone(data),notifications:structuredClone(data.notifications.filter(item=>!item.dismissed&&item.transport!=='system'))}), mutate };
 }
 function reportMarkdown(data, date = dayKey()) {
+  const tr=text=>translate(text,data.settings?.language),locale=data.settings?.language==='en'?'en-US':'ru-RU';
   const clean = text => String(text || '').replace(/[\r\n]+/g, ' ').replace(/[\[\]<>]/g, '');
   const today = data.tasks.filter(t => dayKey(new Date(t.createdAt)) === date || (t.completedAt && dayKey(new Date(t.completedAt)) === date) || t.sessions.some(s => dayKey(new Date(s.start)) === date || dayKey(new Date(s.end)) === date) || (t.startedAt && dayKey(new Date(t.startedAt)) === date));
   const start = new Date(`${date}T00:00:00`).getTime(); const end = new Date(start); end.setDate(end.getDate()+1);
   const duration = t => { const sessions = [...t.sessions, ...(t.startedAt ? [{ start: t.startedAt, end: new Date().toISOString() }] : [])]; return Math.round(sessions.reduce((sum,s) => sum + Math.max(0, Math.min(Date.parse(s.end), end.getTime()) - Math.max(Date.parse(s.start), start)), 0)/60000); };
-  return `# Windows Island · Отчёт за ${date}\n\nСформирован: ${new Date().toLocaleString('ru-RU')}\n\nЗавершено сегодня: ${today.filter(t => t.completedAt && dayKey(new Date(t.completedAt)) === date).length}\nВремя работы сегодня: ${today.reduce((s,t) => s + duration(t), 0)} мин\n\n## Задачи\n\n${today.map(t => `- [${t.status === 'done' ? 'x' : ' '}] ${clean(t.title)} — ${duration(t)} мин${t.deadline ? ` · срок: ${clean(t.deadline)}` : ''}${t.url ? `\n  Ссылка: ${t.url}` : ''}${t.notes ? `\n  Заметки: ${clean(t.notes)}` : ''}`).join('\n') || 'Задач и рабочих сессий за этот день нет.'}\n\n## События\n\n${data.events.filter(e => dayKey(new Date(e.start)) === date).map(e => `- ${new Date(e.start).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})} · ${clean(e.title)}${e.location ? ` · ${clean(e.location)}` : ''}`).join('\n') || 'Событий нет.'}\n`;
+  return `# Windows Island · ${tr('Отчёт за')} ${date}\n\n${tr('Сформирован:')} ${new Date().toLocaleString(locale)}\n\n${tr('Завершено сегодня:')} ${today.filter(t => t.completedAt && dayKey(new Date(t.completedAt)) === date).length}\n${tr('Время работы сегодня:')} ${today.reduce((s,t) => s + duration(t), 0)} ${tr('мин')}\n\n## ${tr('Задачи')}\n\n${today.map(t => `- [${t.status === 'done' ? 'x' : ' '}] ${clean(t.title)} — ${duration(t)} ${tr('мин')}${t.deadline ? ` · ${tr('срок:')} ${clean(t.deadline)}` : ''}${t.url ? `\n  ${tr('Ссылка:')} ${t.url}` : ''}${t.notes ? `\n  ${tr('Заметки:')} ${clean(t.notes)}` : ''}`).join('\n') || tr('Задач и рабочих сессий за этот день нет.')}\n\n## ${tr('События')}\n\n${data.events.filter(e => dayKey(new Date(e.start)) === date).map(e => `- ${new Date(e.start).toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit'})} · ${clean(e.title)}${e.location ? ` · ${clean(e.location)}` : ''}`).join('\n') || tr('Событий нет.')}\n`;
 }
 module.exports = { createStore, dayKey, reportMarkdown };

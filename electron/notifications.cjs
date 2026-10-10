@@ -14,8 +14,9 @@ function normalizeNotification(input={}){
   const body=String(input.body||'').trim();const title=String(input.title||'').trim();if(!body&&!title)throw new Error('Укажите заголовок или текст');if(body.length>10000||title.length>300)throw new Error('Уведомление слишком длинное');
   const status=['info','completed','needs_input','failed'].includes(input.status)?input.status:'info';
   const icon=typeof input.icon==='string'&&/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(input.icon)&&input.icon.length<100000?input.icon:'';
-  const kind=['charging','unplugged','battery-low','wifi-connected','wifi-disconnected'].includes(input.kind)?input.kind:'';
-  return {id:randomUUID(),eventId:String(input.eventId||'').slice(0,300),source,appName:String(input.appName||sources[source]).slice(0,100),title,body,status,kind,target:validateTarget(input.target),icon,taskId:String(input.taskId||'').slice(0,100),createdAt:new Date().toISOString(),read:false,transport:input.transport==='windows'?'windows':input.transport==='system'?'system':'mcp',fingerprint:createHash('sha256').update(`${source}${source==='other'?`|${canonical(input.appName||sources[source])}`:''}|${canonical(body||title)}`).digest('hex')};
+  const kind=['charging','unplugged','battery-low','wifi-connected','wifi-disconnected','vpn-connected','vpn-disconnected'].includes(input.kind)?input.kind:'';
+  const chargePercent=Number.isFinite(input.chargePercent)&&input.chargePercent>=0&&input.chargePercent<=100?input.chargePercent:null;
+  return {id:randomUUID(),eventId:String(input.eventId||'').slice(0,300),source,appName:String(input.appName||sources[source]).slice(0,100),title,body,status,kind,chargePercent,target:validateTarget(input.target),icon,taskId:String(input.taskId||'').slice(0,100),createdAt:new Date().toISOString(),read:false,transport:input.transport==='windows'?'windows':input.transport==='system'?'system':'mcp',fingerprint:createHash('sha256').update(`${source}${source==='other'?`|${canonical(input.appName||sources[source])}`:''}|${canonical(body||title)}`).digest('hex')};
 }
 function findDuplicate(history,item,now=Date.now()){
   return history.find(previous=>{

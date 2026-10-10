@@ -1,5 +1,5 @@
 import type { State, Weather } from './bridge';
-export const demo = !window.island && new URLSearchParams(location.search).has('demo');
+export const demo = __ISLAND_WEB__ && !window.island && new URLSearchParams(location.search).has('demo');
 export function demoState(settings: State['settings']): State {
   const today = new Date(), startedAt = new Date(Date.now() - 24 * 60000).toISOString();
   const deadline = new Date(today); deadline.setHours(18, 0, 0, 0);

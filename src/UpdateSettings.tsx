@@ -1,32 +1,26 @@
-import { useEffect, useState } from 'react';
-import { Download, LoaderCircle, RefreshCw } from 'lucide-react';
-import { bridge, native, type ReleaseInfo } from './bridge';
+import {useEffect,useSyncExternalStore} from 'react';
+import {Download,LoaderCircle,RefreshCw} from 'lucide-react';
+import {bridge,native,type ReleaseInfo} from './bridge';
+import {t} from './i18n';
 
-export function UpdateSettings() {
-  const [release, setRelease] = useState<ReleaseInfo | null>(null);
-  const [phase, setPhase] = useState<'idle' | 'checking' | 'downloading' | 'ready'>('idle');
-  const [progress, setProgress] = useState(0), [error, setError] = useState('');
-  useEffect(() => bridge.on('update-progress', setProgress), []);
-  async function check() {
-    setError(''); setPhase('checking');
-    try { setRelease(await bridge.checkUpdates()); } catch (e) { setError((e as Error).message); }
-    finally { setPhase('idle'); }
-  }
-  async function download() {
-    setError(''); setPhase('downloading'); setProgress(0);
-    try { const result=await bridge.downloadUpdate();setRelease(value=>value?{...value,version:result.version}:value);setPhase('ready'); }
-    catch (e) { setError((e as Error).message); setPhase('idle'); }
-  }
+// Keep an in-flight download and its ready state when the hidden panel is unmounted.
+type UpdateState={release:ReleaseInfo|null;phase:'idle'|'checking'|'downloading'|'ready';progress:number;error:string};
+let session:UpdateState={release:null,phase:'idle',progress:0,error:''};
+const listeners=new Set<()=>void>();
+const subscribe=(listener:()=>void)=>{listeners.add(listener);return()=>{listeners.delete(listener);};};
+const patch=(change:Partial<UpdateState>)=>{session={...session,...change};listeners.forEach(listener=>listener());};
+export function UpdateSettings(){
+  const {release,phase,progress,error}=useSyncExternalStore(subscribe,()=>session);
+  useEffect(()=>bridge.on('update-progress',value=>patch({progress:value})),[]);
+  async function check(){patch({error:'',phase:'checking'});try{patch({release:await bridge.checkUpdates(),phase:'idle'});}catch(e){patch({error:(e as Error).message,phase:'idle'});}}
+  async function download(){patch({error:'',phase:'downloading',progress:0});try{const result=await bridge.downloadUpdate();patch({release:session.release?{...session.release,version:result.version}:null,phase:'ready',progress:100});}catch(e){patch({error:(e as Error).message,phase:'idle'});}}
   return <div className="update-settings">
-    <button className="text-action" onClick={check} disabled={phase === 'checking' || phase === 'downloading' || !native}>
-      {phase === 'checking' ? <LoaderCircle className="spinning" size={13} /> : <RefreshCw size={13} />}
-      {phase === 'checking' ? 'Проверяем…' : 'Проверить обновления'}
-    </button>
-    {!native && <small>Обновления доступны в приложении Windows.</small>}
-    {release && <small role="status">{release.available ? `Доступна версия ${release.version}` : release.empty ? 'Пока нет опубликованных релизов.' : `Установлена актуальная версия ${release.current}`}</small>}
-    {release?.available && phase === 'idle' && <button className="text-action" onClick={download}><Download size={13} /> Скачать обновление · {Math.round(release.size! / 1024 / 1024)} МБ</button>}
-    {phase === 'downloading' && <div className="update-progress" role="status"><small>Скачиваем · {progress}%</small><progress max={100} value={progress} /></div>}
-    {phase === 'ready' && <button className="primary-button" onClick={() => bridge.restartUpdate().catch(e => setError(e.message))}>Перезапустить и обновить</button>}
-    {error && <p className="weather-error" role="alert">{error}</p>}
+    <button className="text-action" onClick={()=>void check()} disabled={phase==='checking'||phase==='downloading'||!native}>{phase==='checking'?<LoaderCircle className="spinning" size={13}/>:<RefreshCw size={13}/>} {phase==='checking'?t('Проверяем…'):t('Проверить обновления')}</button>
+    {!native&&<small>{t('Обновления доступны в приложении Windows.')}</small>}
+    {release&&<small role="status">{release.available?`${t('Доступна версия ')}${release.version}`:release.empty?t('Пока нет опубликованных релизов.'):`${t('Установлена актуальная версия ')}${release.current}`}</small>}
+    {release?.available&&phase==='idle'&&<button className="text-action" onClick={()=>void download()}><Download size={13}/> {t('Скачать обновление · ')}{Math.ceil((release.size||0)/1048576)} {t('МБ')}</button>}
+    {phase==='downloading'&&<small>{t('Скачиваем · ')}{progress}%</small>}
+    {phase==='ready'&&<button className="text-action" onClick={()=>bridge.restartUpdate().catch(e=>patch({error:e.message}))}>{t('Перезапустить и обновить')}</button>}
+    {error&&<p className="update-error" role="alert">{t(error)}</p>}
   </div>;
 }

@@ -4,6 +4,7 @@ export function useSpringValue(target: number) {
   const [value, setValue] = useState(target);
   const current = useRef(target), velocity = useRef(0);
   useEffect(() => {
+    if(current.current===target&&velocity.current===0)return;
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
       current.current = target; velocity.current = 0; setValue(target); return;
     }

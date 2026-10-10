@@ -1,4 +1,7 @@
 const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, shell, dialog, clipboard, powerMonitor, net } = require('electron');
+const {translate}=require('./locale.cjs');
+const tr=text=>translate(text,store?.read().settings.language);
+function refreshTray(){if(!tray||!store)return;const settings=store.read().settings;tray.setContextMenu(Menu.buildFromTemplate([{label:tr('Открыть Windows Island'),click:()=>win.webContents.send('expand',true)},...(settings.tasksEnabled?[{label:tr('Составить отчёт дня'),click:()=>writeReport().catch(error=>dialog.showErrorBox('Windows Island',error.message))}]:[]),{type:'separator'},{label:tr('Выйти'),click:()=>app.quit()}]));}
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -29,7 +32,7 @@ let windows,blocked=false,quitting=false,allowClose=false;
 function collapseWindow(){pointerCaptured=false;if(win&&!win.isDestroyed())win.webContents.send('expand',false);updateHitRegion();}
 let runtime={monitor:'starting',notifications:'starting',exclusive:false,fullscreen:false,icons:{}};
 const readState=()=>({...store.read(),runtime});
-function runtimeUpdate(change){const next={...runtime,...change};if(JSON.stringify(next)===JSON.stringify(runtime))return;runtime=next;if(win&&!win.isDestroyed())win.webContents.send('state',readState());}
+function runtimeUpdate(change){const next={...runtime,...change};if(JSON.stringify(next)===JSON.stringify(runtime))return;runtime=next;if(win&&!win.isDestroyed())win.webContents.send('runtime',runtime);}
 const dev = process.argv.includes('--dev');
 app.setPath('userData',path.join(app.getPath('appData'),'windows-island'));
 if (process.env.ISLAND_TEST_DATA) {
@@ -54,7 +57,7 @@ else {
     win.webContents.on('before-input-event',(event,input)=>{
       if(input.type==='keyDown'&&((input.control&&!input.alt&&!input.meta&&input.key.toLowerCase()==='w')||(input.alt&&!input.control&&input.key==='F4'))){event.preventDefault();collapseWindow();}
     });
-    setInterval(updateHitRegion,16).unref();
+    setInterval(updateHitRegion,32).unref();
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', (event) => event.preventDefault());
     win.once('ready-to-show', () => win.showInactive());
@@ -63,7 +66,7 @@ else {
     screen.on('display-metrics-changed', () => win.setBounds(bounds(mode)));
     const icon = nativeImage.createFromPath(path.join(__dirname,'assets','icon.png')).resize({width:20,height:20});
     tray = new Tray(icon); tray.setToolTip('Windows Island');
-    tray.setContextMenu(Menu.buildFromTemplate([{label:'Открыть Windows Island', click:() => win.webContents.send('expand',true)},{label:'Составить отчёт дня',click:() => writeReport()},{type:'separator'},{label:'Выйти',click:() => app.quit()}]));
+    refreshTray();
     tray.on('click', () => win.webContents.send('expand', true));
     startServer();
     windows=new WindowsIntegration({app,onFullscreen:setBlocked,onNotification:(item,options)=>receiveNotification(item,options),onStatus:runtimeUpdate,onIcon:(source,icon)=>runtimeUpdate({icons:{...runtime.icons,[source]:icon}})});
@@ -94,27 +97,27 @@ function notify(title, body) {return receiveNotification({title,body,source:'isl
 function act(action, input) {
   const result = store.mutate(action,input);
   if (action === 'settings.update' && typeof input.startup === 'boolean') app.setLoginItemSettings({openAtLogin:input.startup, path: process.env.PORTABLE_EXECUTABLE_FILE || app.getPath('exe'), args:app.isPackaged?[]:[app.getAppPath()]});
-  if(action==='settings.update'){windows?.configure(store.read().settings);setBlocked(runtime.fullscreen);}
+  if(action==='settings.update'){refreshTray();windows?.configure(store.read().settings);setBlocked(runtime.fullscreen);}
   win.webContents.send('state',readState());
   if (action === 'task.add'&&!input.source) notify('Новая задача',result.title);
   if (action === 'event.add') notify('Событие добавлено',result.title);
   return result;
 }
 async function weather() {
-  const s = store.read().settings;
+  const s = store.read().settings;if(s.weatherEnabled===false)throw new Error('Погода отключена в настройках');
   const response = await net.fetch(forecastUrl(s),{signal:AbortSignal.timeout(12000)});
   if (!response.ok) throw new Error('Погода временно недоступна');
   return normalizeWeather(await response.json(),s.city);
 }
 async function cities(name) {
   if (typeof name !== 'string' || name.length < 2 || name.length > 100) return [];
-  const response = await net.fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=5&language=ru&format=json`,{signal:AbortSignal.timeout(12000)});
+  const response = await net.fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=5&language=${store.read().settings.language}&format=json`,{signal:AbortSignal.timeout(12000)});
   if (!response.ok) throw new Error('Поиск города недоступен'); return (await response.json()).results || [];
 }
 async function writeReport() {
-  const folder = path.join(app.getPath('desktop'),'Windows Island'); fs.mkdirSync(folder,{recursive:true});
-  const file = path.join(folder,`Отчёт-${dayKey()}-${Date.now()}.md`); fs.writeFileSync(file,reportMarkdown(store.read()),'utf8');
-  notify('Отчёт готов','Сохранён на рабочем столе в папке Windows Island'); return file;
+  const folder = store.read().settings.reportFolder || path.join(app.getPath('desktop'),'Windows Island'); fs.mkdirSync(folder,{recursive:true});
+  const file = path.join(folder,`${store.read().settings.language==='en'?'Report':'Отчёт'}-${dayKey()}-${Date.now()}.md`); fs.writeFileSync(file,reportMarkdown(store.read()),'utf8');
+  notify(tr('Отчёт готов'),tr('Сохранено в папке: ')+folder); return file;
 }
 function mcpConfig() {
   if(!server?.listening)throw new Error('Локальный MCP-мост ещё не готов или порт 47831 занят. Перезапустите Island.');
@@ -132,6 +135,7 @@ ipcMain.handle('download-update',()=>updater.download());
 ipcMain.handle('restart-update',()=>updater.restart());
 ipcMain.handle('cities',(_,name)=>cities(name));
 ipcMain.handle('report',writeReport);
+ipcMain.handle('report-folder',async()=>{dialogOpen=true;let result;try{result=await dialog.showOpenDialog(win,{properties:['openDirectory','createDirectory'],defaultPath:store.read().settings.reportFolder||path.join(app.getPath('desktop'),'Windows Island')});}finally{dialogOpen=false;}if(result.canceled)return null;act('settings.update',{reportFolder:result.filePaths[0]});return result.filePaths[0];});
 ipcMain.handle('open',(_,url)=>{const parsed=new URL(url);if(!['https:','http:'].includes(parsed.protocol)) throw new Error('Недопустимая ссылка');return shell.openExternal(parsed.href);});
 ipcMain.handle('jump',async(_,value)=>{const target=validateTarget(value);if(!target)throw new Error('У сообщения нет перехода');if(target.url)return shell.openExternal(target.url);if(!await windows.focus(target.app))throw new Error('Не удалось активировать приложение. Откройте его или передайте точную ссылку на чат/проект.');});
 ipcMain.handle('media-control',(_,action,sourceId)=>windows.mediaControl(action,sourceId));
@@ -147,7 +151,7 @@ ipcMain.handle('copy-config',(_,text)=>clipboard.writeText(String(text)));
 ipcMain.on('capsule-menu',event=>{
   if(event.sender!==win?.webContents||win.isDestroyed())return;
   dialogOpen=true;pointerCaptured=false;updateHitRegion();
-  Menu.buildFromTemplate([{label:'Отключить',click:()=>app.quit()}]).popup({window:win,callback:()=>{dialogOpen=false;}});
+  Menu.buildFromTemplate([{label:tr('Отключить'),click:()=>app.quit()}]).popup({window:win,callback:()=>{dialogOpen=false;}});
 });
 ipcMain.handle('import-calendar',async()=>{
   dialogOpen=true;let result;try{result=await dialog.showOpenDialog(win,{properties:['openFile'],filters:[{name:'Календарь',extensions:['ics']}]});}finally{dialogOpen=false;} if(result.canceled) return 0;
