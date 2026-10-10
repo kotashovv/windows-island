@@ -1,6 +1,6 @@
 {
   "name": "windows-island",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A quiet, beautifully animated desktop island for Windows",
   "type": "module",
   "main": "electron/main.cjs",

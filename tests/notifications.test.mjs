@@ -5,6 +5,10 @@ import path from 'node:path';
 import os from 'node:os';
 import storeModule from '../electron/store.cjs';
 import notifications from '../electron/notifications.cjs';
+test('legacy system notifications are excluded from history without deleting agent reports',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'island-legacy-system-'));
+  try{const file=path.join(dir,'state.json');fs.writeFileSync(file,JSON.stringify({notifications:[{id:'power',source:'island',transport:'system',kind:'charging'},{id:'agent',source:'codex',transport:'mcp',title:'Done'}],agentReports:[{id:'report'}]}));const state=storeModule.createStore(file).read();assert.deepEqual(state.notifications.map(n=>n.id),['agent']);assert.equal(state.agentReports.length,1);}finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
 test('reports complete tracked tasks once, including when native notification arrives first',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'island-notification-'));
   try{const store=storeModule.createStore(path.join(dir,'state.json'));const task=store.mutate('task.add',{title:'Work'});store.mutate('task.start',{id:task.id});

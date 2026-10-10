@@ -6,24 +6,27 @@ const {execFile}=require('node:child_process');
 const { randomBytes } = require('node:crypto');
 const { createStore, dayKey, reportMarkdown } = require('./store.cjs');
 const {WindowsIntegration}=require('./windows.cjs');
-const {validateTarget}=require('./notifications.cjs');
+const {validateTarget,normalizeNotification}=require('./notifications.cjs');
 const {forecastUrl,normalizeWeather}=require('./weather.cjs');
 const {createUpdater}=require('./updates.cjs');
 const updater=createUpdater({app,fetch:(...args)=>net.fetch(...args),onProgress:value=>{if(win&&!win.isDestroyed())win.webContents.send('update-progress',value);}});
 let win, tray, store, server, token, connectionFile;
 let dialogOpen=false;
 let mode = 'collapsed';
-let hitRegion={x:154,y:0,width:132,height:26,radius:18},pointerCaptured=false,ignoringMouse=false;
+let hitRegion={x:154,y:0,width:132,height:26,radius:18},satellites=[],pointerCaptured=false,ignoringMouse=false;
 function updateHitRegion(){
   if(!win||win.isDestroyed()||blocked)return;
-  const point=screen.getCursorScreenPoint(),origin=win.getBounds(),r=hitRegion;
-  const x=point.x-origin.x-r.x,y=point.y-origin.y-r.y,corner=Math.min(r.radius,r.width/2,r.height/2);
-  const dx=Math.max(corner-x,0,x-(r.width-corner)),dy=Math.max(corner-y,0,y-(r.height-corner));
-  const inside=x>=0&&y>=0&&x<=r.width&&y<=r.height&&dx*dx+dy*dy<=corner*corner;
+  const point=screen.getCursorScreenPoint(),origin=win.getBounds();
+  const inside=[hitRegion,...satellites].some(r=>{
+    const x=point.x-origin.x-r.x,y=point.y-origin.y-r.y,corner=Math.min(r.radius,r.width/2,r.height/2);
+    const dx=Math.max(corner-x,0,x-(r.width-corner)),dy=Math.max(corner-y,0,y-(r.height-corner));
+    return x>=0&&y>=0&&x<=r.width&&y<=r.height&&dx*dx+dy*dy<=corner*corner;
+  });
   const ignore=!pointerCaptured&&!inside;
   if(ignore!==ignoringMouse){ignoringMouse=ignore;win.setIgnoreMouseEvents(ignore,{forward:true});}
 }
-let windows,blocked=false,quitting=false;
+let windows,blocked=false,quitting=false,allowClose=false;
+function collapseWindow(){pointerCaptured=false;if(win&&!win.isDestroyed())win.webContents.send('expand',false);updateHitRegion();}
 let runtime={monitor:'starting',notifications:'starting',exclusive:false,fullscreen:false,icons:{}};
 const readState=()=>({...store.read(),runtime});
 function runtimeUpdate(change){const next={...runtime,...change};if(JSON.stringify(next)===JSON.stringify(runtime))return;runtime=next;if(win&&!win.isDestroyed())win.webContents.send('state',readState());}
@@ -39,12 +42,18 @@ else {
   app.on('second-instance', () => win?.webContents.send('expand'));
   app.whenReady().then(async () => {
     store = createStore(path.join(app.getPath('userData'), 'island.json'));
+    Menu.setApplicationMenu(null);
     connectionFile = path.join(app.getPath('userData'), 'mcp-connection.json');
     if(app.isPackaged){const folder=path.join(app.getPath('userData'),'mcp');fs.mkdirSync(folder,{recursive:true});fs.copyFileSync(path.join(process.resourcesPath,'mcp','server.cjs'),path.join(folder,'server.cjs'));}
     token = randomBytes(32).toString('hex');
     const position = bounds('collapsed');
     win = new BrowserWindow({ ...position, transparent: true, frame: false, resizable: false, maximizable: false, minimizable: false, skipTaskbar: true, show: false, hasShadow: false, backgroundColor: '#00000000', alwaysOnTop: true, webPreferences: { preload: path.join(__dirname,'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
     win.setAlwaysOnTop(true, 'screen-saver');
+    win.on('close',event=>{if(!allowClose){event.preventDefault();collapseWindow();}});
+    win.on('session-end',()=>{allowClose=true;pauseRunning();windows?.stop();server?.close();try{if(connectionFile)fs.unlinkSync(connectionFile);}catch{}});
+    win.webContents.on('before-input-event',(event,input)=>{
+      if(input.type==='keyDown'&&((input.control&&!input.alt&&!input.meta&&input.key.toLowerCase()==='w')||(input.alt&&!input.control&&input.key==='F4'))){event.preventDefault();collapseWindow();}
+    });
     setInterval(updateHitRegion,16).unref();
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', (event) => event.preventDefault());
@@ -71,6 +80,11 @@ function bounds(value) {
 }
 function setBlocked(fullscreen){const next=fullscreen&&store.read().settings.hideFullscreen;runtimeUpdate({fullscreen});if(blocked===next)return;blocked=next;win.webContents.send('overlay-blocked',blocked);if(blocked){mode='collapsed';win.hide();}else{win.setBounds(bounds('collapsed'));win.showInactive();}}
 function receiveNotification(input,options={show:true,report:false}){
+  if(input.transport==='system'&&!options.report){
+    const item={...normalizeNotification(input),transient:true};
+    if(options.show!==false&&!store.read().settings.quiet&&!blocked)win.webContents.send('notification',item);
+    return {accepted:true,notification:item};
+  }
   const source=input.source||'island';const result=store.mutate(options.report?'agent.report':'notification.add',{...input,icon:input.icon||runtime.icons[source]||''});
   win.webContents.send('state',readState());
   if(result.accepted&&options.show!==false&&!store.read().settings.quiet&&!blocked)win.webContents.send('notification',result.notification);
@@ -110,7 +124,7 @@ function mcpConfig() {
 ipcMain.handle('read',()=>readState());
 ipcMain.handle('act',(_,action,input)=>act(action,input));
 ipcMain.on('resize',(_,value)=>{if(!['collapsed','mini','capsule','expanded','toast','dragging'].includes(value)||blocked)return;mode=value;if(['capsule','expanded'].includes(value)&&!win.isFocused())win.focus();});
-ipcMain.on('hit-region',(_,value)=>{if(!value||!['x','y','width','height','radius'].every(key=>Number.isFinite(value[key])))return;hitRegion={x:value.x,y:value.y,width:Math.max(0,Math.min(440,value.width)),height:Math.max(0,Math.min(620,value.height)),radius:Math.max(0,Math.min(100,value.radius))};updateHitRegion();});
+ipcMain.on('hit-region',(_,value)=>{const valid=r=>r&&['x','y','width','height','radius'].every(key=>Number.isFinite(r[key]));const clean=r=>({x:r.x,y:r.y,width:Math.max(0,Math.min(440,r.width)),height:Math.max(0,Math.min(620,r.height)),radius:Math.max(0,Math.min(100,r.radius))});if(!valid(value))return;hitRegion=clean(value);satellites=Array.isArray(value.satellites)?value.satellites.slice(0,2).filter(valid).map(clean):[];updateHitRegion();});
 ipcMain.on('pointer-capture',(_,value)=>{pointerCaptured=value===true;updateHitRegion();});
 ipcMain.handle('weather',weather);
 ipcMain.handle('check-updates',()=>updater.check());
@@ -125,12 +139,16 @@ ipcMain.handle('media-source',async(_,sourceId)=>{
   if(!windows.media||sourceId!==windows.media.sourceId)throw new Error('Источник музыки изменился');
   if(await windows.focusMedia(sourceId))return;
   if(typeof sourceId==='string'&&sourceId.includes('!')&&/^[\w.!-]{1,300}$/.test(sourceId))return new Promise((resolve,reject)=>execFile('explorer.exe',[`shell:AppsFolder\\${sourceId}`],{windowsHide:true},error=>error?reject(new Error('Не удалось открыть источник музыки')):resolve(true)));
-  throw new Error('Не удалось открыть источник музыки. Возможно, окно плеера закрыто.');
+  return {notice:'Источник звука уже открыт. Переключитесь на окно плеера.'};
 });
 ipcMain.handle('notification-settings',()=>shell.openExternal('ms-settings:notifications'));
 ipcMain.handle('mcp-config',mcpConfig);
 ipcMain.handle('copy-config',(_,text)=>clipboard.writeText(String(text)));
-ipcMain.on('quit',()=>app.quit());
+ipcMain.on('capsule-menu',event=>{
+  if(event.sender!==win?.webContents||win.isDestroyed())return;
+  dialogOpen=true;pointerCaptured=false;updateHitRegion();
+  Menu.buildFromTemplate([{label:'Отключить',click:()=>app.quit()}]).popup({window:win,callback:()=>{dialogOpen=false;}});
+});
 ipcMain.handle('import-calendar',async()=>{
   dialogOpen=true;let result;try{result=await dialog.showOpenDialog(win,{properties:['openFile'],filters:[{name:'Календарь',extensions:['ics']}]});}finally{dialogOpen=false;} if(result.canceled) return 0;
   const file=result.filePaths[0]; if(fs.statSync(file).size>5*1024*1024) throw new Error('Календарь слишком большой (максимум 5 МБ)');
@@ -167,5 +185,5 @@ function startServer() {
   server.listen(PORT,'127.0.0.1',()=>fs.writeFileSync(connectionFile,JSON.stringify({url:`http://127.0.0.1:${PORT}`,token})));
 }
 function pauseRunning(){for(const task of store?.read().tasks||[])if(task.status==='running')store.mutate('task.pause',{id:task.id});if(win&&!win.isDestroyed())win.webContents.send('state',store.read());}
-app.on('before-quit',event=>{if(windows&&!quitting){event.preventDefault();quitting=true;windows.stop();setTimeout(()=>app.quit(),500);return;}pauseRunning();server?.close();try{if(connectionFile)fs.unlinkSync(connectionFile);}catch{}});
+app.on('before-quit',event=>{allowClose=true;if(windows&&!quitting){event.preventDefault();quitting=true;windows.stop();setTimeout(()=>app.quit(),500);return;}pauseRunning();server?.close();try{if(connectionFile)fs.unlinkSync(connectionFile);}catch{}});
 app.on('window-all-closed',()=>app.quit());

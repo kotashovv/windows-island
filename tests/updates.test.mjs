@@ -5,13 +5,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-const { createUpdater, selectRelease, newer } = createRequire(import.meta.url)('../electron/updates.cjs');
+const { createUpdater, selectRelease, newer, latestStable } = createRequire(import.meta.url)('../electron/updates.cjs');
 const binary = Buffer.from('mock portable release');
 const digest = createHash('sha256').update(binary).digest('hex');
 const release = { tag_name: 'v0.2.4', draft: false, prerelease: false, assets: [{
   name: 'Windows-Island-0.2.4.exe', state: 'uploaded', size: binary.length, digest: `sha256:${digest}`,
   browser_download_url: 'https://github.com/kotashovv/windows-island/releases/download/v0.2.4/Windows-Island-0.2.4.exe'
 }] };
+test('skipped versions update straight to highest stable version, refreshing stale checks',async()=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'island-skip-update-'));const urls=[];let latest='0.2.4';
+  const make=v=>({...release,tag_name:'v'+v,assets:[{...release.assets[0],name:`Windows-Island-${v}.exe`,browser_download_url:`https://github.com/kotashovv/windows-island/releases/download/v${v}/Windows-Island-${v}.exe`}]});
+  assert.equal(latestStable([make('0.2.4'),make('0.2.7'),make('0.2.3'),{...make('0.3.0'),prerelease:true}]).tag_name,'v0.2.7');
+  try{const updater=createUpdater({app:{getVersion:()=> '0.2.3',getPath:()=>dir},fetch:async(url,options)=>{urls.push(url);if(url.includes('/releases?')){assert.equal(options.cache,'no-store');return new Response(JSON.stringify([make('0.2.4'),make(latest)]));}return new Response(binary);}});assert.equal((await updater.check()).version,'0.2.4');latest='0.2.7';assert.equal((await updater.download()).version,'0.2.7');assert.ok(urls.at(-1).endsWith('/v0.2.7/Windows-Island-0.2.7.exe'));assert.equal(urls.filter(u=>u.endsWith('.exe')).length,1);}finally{await fs.rm(dir,{recursive:true,force:true});}
+});
 test('version comparison is numeric; update must belong to our repo and have a SHA-256 digest', () => {
   assert.equal(newer('0.2.10', '0.2.3'), true); assert.equal(newer('0.2.3', '0.2.3'), false);
   assert.equal(selectRelease(release, '0.2.3').available, true);
@@ -25,11 +31,11 @@ test('downloads verified binary and relaunches only after explicit restart; tamp
   const app = { getVersion: () => '0.2.3', getPath: () => dir, isPackaged: true,
     getLoginItemSettings: () => ({ openAtLogin: false }), relaunch: value => { launched = value; }, quit: () => { exited = true; } };
   try {
-    const updater = createUpdater({ app, fetch: async url => new Response(url.endsWith('/latest') ? JSON.stringify(release) : binary) });
+    const updater = createUpdater({ app, fetch: async url => new Response(url.includes('/releases?') ? JSON.stringify([release]) : binary) });
     await updater.check(); await updater.download(); assert.equal(exited, false);
     await updater.restart(); assert.ok(launched.execPath.endsWith('Windows-Island-0.2.4.exe')); assert.equal(exited, true);
     await fs.writeFile(launched.execPath, 'changed'); await assert.rejects(updater.restart(), /изменился/);
-    const bad = createUpdater({ app, fetch: async url => new Response(url.endsWith('/latest') ? JSON.stringify(release) : Buffer.alloc(binary.length)) });
+    const bad = createUpdater({ app, fetch: async url => new Response(url.includes('/releases?') ? JSON.stringify([release]) : Buffer.alloc(binary.length)) });
     await bad.check(); await assert.rejects(bad.download(), /сумма/);
     assert.equal((await fs.readdir(path.join(dir, 'updates'))).some(name => name.endsWith('.part')), false);
   } finally { await fs.rm(dir, { recursive: true, force: true }); }

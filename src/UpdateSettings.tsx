@@ -14,11 +14,11 @@ export function UpdateSettings() {
   }
   async function download() {
     setError(''); setPhase('downloading'); setProgress(0);
-    try { await bridge.downloadUpdate(); setPhase('ready'); }
+    try { const result=await bridge.downloadUpdate();setRelease(value=>value?{...value,version:result.version}:value);setPhase('ready'); }
     catch (e) { setError((e as Error).message); setPhase('idle'); }
   }
   return <div className="update-settings">
-    <button className="text-action" onClick={check} disabled={phase !== 'idle' || !native}>
+    <button className="text-action" onClick={check} disabled={phase === 'checking' || phase === 'downloading' || !native}>
       {phase === 'checking' ? <LoaderCircle className="spinning" size={13} /> : <RefreshCw size={13} />}
       {phase === 'checking' ? 'Проверяем…' : 'Проверить обновления'}
     </button>

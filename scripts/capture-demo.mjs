@@ -64,14 +64,18 @@ try {
   assert.equal(await page.locator('.weather-day').count(), 7); assert.ok((await capsule.boundingBox()).width <= 351);
   await page.screenshot({ path: 'artifacts/demo-mobile.png' });
   await page.setViewportSize({width:1200,height:760});await page.emulateMedia({reducedMotion:'no-preference'});
-  await page.evaluate(()=>{const state=JSON.parse(localStorage.getItem('windows-island-demo'));state.runtime={media:{sourceId:'demo-player',sourceName:'Демо · Плеер',title:'Время для фокуса',artist:'Пример музыкальной сессии',playing:true,canToggle:true,canNext:false,canPrevious:false}};localStorage.setItem('windows-island-demo',JSON.stringify(state));});
-  await page.reload();await page.waitForTimeout(850);await page.getByRole('button',{name:'Капсула',exact:true}).click();await page.waitForTimeout(850);await page.screenshot({path:path.join(media,'music.png')});
+  await page.evaluate(()=>{const state=JSON.parse(localStorage.getItem('windows-island-demo'));const task=state.tasks.find(t=>t.status==='todo');task.status='running';task.startedAt=new Date().toISOString();state.runtime={media:{sourceId:'demo-player',sourceName:'Демо · Плеер',title:'Время для фокуса',artist:'Пример музыкальной сессии',playing:true,canToggle:true,canNext:false,canPrevious:false}};localStorage.setItem('windows-island-demo',JSON.stringify(state));});
+  await page.reload();await page.waitForTimeout(850);await page.getByRole('button',{name:'Капсула',exact:true}).click();await page.waitForTimeout(850);
+  await page.getByRole('button',{name:'Показать уведомление',exact:true}).click();await page.waitForTimeout(650);assert.equal(await page.locator('.compact-orb').count(),2);await page.screenshot({path:path.join(media,'combined.png')});
+  await page.getByRole('button',{name:'Показать музыку',exact:true}).click();await page.waitForTimeout(650);
+  const capsuleBox=await capsule.boundingBox();for(const orb of await page.locator('.compact-orb').all()){const r=await orb.boundingBox();assert.ok(Math.abs(r.width-38)<.1&&Math.abs(r.height-38)<.1&&r.x>capsuleBox.x+capsuleBox.width&&r.x+r.width<=1200&&r.y>capsuleBox.y&&r.y+r.height<capsuleBox.y+capsuleBox.height,'satellite circles sit separately beside the capsule');}
+  await page.screenshot({path:path.join(media,'music.png')});
   const landing = await browser.newPage({ viewport: { width: 1200, height: 900 } });
   await landing.goto(origin); await landing.locator('.showcase img').waitFor();
   assert.equal(await landing.locator('h1').count(), 1);
   assert.equal(await landing.locator('a', { hasText: 'Попробовать демо' }).getAttribute('href'), 'demo/?demo=1');
   assert.equal(await landing.locator('link[rel=canonical]').getAttribute('href'), 'https://kotashovv.github.io/windows-island/');
-  assert.equal(JSON.parse(await landing.locator('script[type="application/ld+json"]').textContent()).softwareVersion, '0.3.0');
+  assert.equal(JSON.parse(await landing.locator('script[type="application/ld+json"]').textContent()).softwareVersion, '0.3.1');
   await landing.screenshot({ path: 'artifacts/landing-desktop.png' });
   await landing.setViewportSize({ width: 375, height: 800 });
   assert.ok(await landing.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'landing must fit mobile screens');

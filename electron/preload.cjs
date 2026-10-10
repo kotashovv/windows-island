@@ -19,7 +19,7 @@ contextBridge.exposeInMainWorld('island', {
   importCalendar: () => ipcRenderer.invoke('import-calendar'),
   mcpConfig: () => ipcRenderer.invoke('mcp-config'),
   copyConfig: text => ipcRenderer.invoke('copy-config', text),
-  quit: () => ipcRenderer.send('quit'),
+  contextMenu: () => ipcRenderer.send('capsule-menu'),
   on: (channel, callback) => {
     if (!['state','notification','contrast','expand','overlay-blocked','update-progress'].includes(channel)) return () => {};
     const listener = (_, data) => callback(data); ipcRenderer.on(channel, listener);

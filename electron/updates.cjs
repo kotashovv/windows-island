@@ -27,24 +27,35 @@ function selectRelease(release, current) {
   return { available: newer(version, current), current, version, url, name, downloadUrl,
     size: asset.size, sha256: asset.digest.slice(7).toLowerCase() };
 }
+function latestStable(releases){
+  if(!Array.isArray(releases))throw new Error('Неверный ответ GitHub');
+  return releases.filter(r=>!r.draft&&!r.prerelease&&/^v?\d+\.\d+\.\d+$/.test(r.tag_name||''))
+    .reduce((latest,r)=>!latest||newer(r.tag_name,latest.tag_name)?r:latest,null);
+}
 function createUpdater({ app, fetch, onProgress = () => {} }) {
   let checked, downloaded, active;
   async function check() {
-    const response = await fetch(`https://api.github.com/repos/${REPOSITORY}/releases/latest`, {
-      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Windows-Island' }, signal: AbortSignal.timeout(15000)
+    const response = await fetch(`https://api.github.com/repos/${REPOSITORY}/releases?per_page=100`, {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Windows-Island', 'Cache-Control':'no-cache' }, cache:'no-store', signal: AbortSignal.timeout(15000)
     });
     if (response.status === 404) { checked = null; return { available: false, current: app.getVersion(), version: app.getVersion(), empty: true }; }
     if (response.status === 403 || response.status === 429) throw new Error('Лимит запросов GitHub. Попробуйте позже.');
     if (!response.ok) throw new Error('GitHub временно недоступен');
-    checked = selectRelease(await response.json(), app.getVersion());
+    let latest=latestStable(await response.json());
+    let link=response.headers.get('link');
+    while(link){const next=/<(https:\/\/api\.github\.com\/repos\/kotashovv\/windows-island\/releases\?[^>]+)>; rel="next"/.exec(link)?.[1];if(!next)break;const page=await fetch(next,{headers:{Accept:'application/vnd.github+json','User-Agent':'Windows-Island','Cache-Control':'no-cache'},cache:'no-store',signal:AbortSignal.timeout(15000)});if(!page.ok)throw new Error('GitHub временно недоступен');const candidate=latestStable(await page.json());if(candidate&&(!latest||newer(candidate.tag_name,latest.tag_name)))latest=candidate;link=page.headers.get('link');}
+    if(!latest){checked=null;downloaded=null;return {available:false,current:app.getVersion(),version:app.getVersion(),empty:true};}
+    checked = selectRelease(latest, app.getVersion());
     downloaded = null;
     return checked;
   }
   async function download() {
     if (active) return active;
     if (!checked?.available) throw new Error('Сначала проверьте обновления');
-    const release = { ...checked };
     active = (async () => {
+      // Recheck at download time: a newer release may have appeared since opening Settings.
+      await check();if(!checked?.available)throw new Error('Установлена актуальная версия');
+      const release = { ...checked };
       const folder = path.join(app.getPath('userData'), 'updates');
       fs.mkdirSync(folder, { recursive: true });
       const destination = path.join(folder, release.name), partial = destination + '.part';
@@ -83,4 +94,4 @@ function createUpdater({ app, fetch, onProgress = () => {} }) {
   }
   return { check, download, restart };
 }
-module.exports = { createUpdater, selectRelease, newer };
+module.exports = { createUpdater, selectRelease, newer, latestStable };

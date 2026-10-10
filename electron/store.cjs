@@ -70,7 +70,7 @@ function createStore(filename) {
     }
     throw new Error('Неизвестное действие');
   }
-  return { read: () => ({...structuredClone(data),notifications:structuredClone(data.notifications.filter(item=>!item.dismissed))}), mutate };
+  return { read: () => ({...structuredClone(data),notifications:structuredClone(data.notifications.filter(item=>!item.dismissed&&item.transport!=='system'))}), mutate };
 }
 function reportMarkdown(data, date = dayKey()) {
   const clean = text => String(text || '').replace(/[\r\n]+/g, ' ').replace(/[\[\]<>]/g, '');
