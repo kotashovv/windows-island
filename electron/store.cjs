@@ -6,7 +6,7 @@ const { randomUUID } = require('node:crypto');
 const {normalizeNotification,findDuplicate}=require('./notifications.cjs');
 
 const dayKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
-const defaults = () => ({ tasks: [], events: [], notifications:[], agentReports:[], settings: { shortcut:'Shift+F1',gamingOverlay:false,language:'ru',reportFolder:'',tasksEnabled:true,weatherEnabled:true,batteryNotifications:true,wifiNotifications:true,vpnNotifications:true,city: 'Астрахань', latitude: 46.35, longitude: 48.04, startup: false, glass: true, autoContrast: true, quiet: false, greeting: true, nativeNotifications:true, islandOnly:true, hideFullscreen:true,systemNotifications:true,mediaControls:true } });
+const defaults = () => ({ tasks: [], events: [], notifications:[], agentReports:[], settings: { clipboardNotifications:true,toolsEnabled:true,shortcut:'Shift+F1',gamingOverlay:false,language:'ru',reportFolder:'',tasksEnabled:true,weatherEnabled:true,batteryNotifications:true,wifiNotifications:true,vpnNotifications:true,city: 'Астрахань', latitude: 46.35, longitude: 48.04, startup: false, glass: true, autoContrast: true, quiet: false, greeting: true, nativeNotifications:true, islandOnly:true, hideFullscreen:true,systemNotifications:true,mediaControls:true } });
 function createStore(filename) {
   let data = defaults();
   if (fs.existsSync(filename)) {
@@ -72,7 +72,7 @@ function createStore(filename) {
       if(input.language!==undefined&&!['ru','en'].includes(input.language))throw new Error('Неподдерживаемый язык');
       if(input.reportFolder!==undefined&&(typeof input.reportFolder!=='string'||input.reportFolder.length>3000||input.reportFolder.includes('\0')||(input.reportFolder&&!path.isAbsolute(input.reportFolder))))throw new Error('Укажите абсолютный путь к папке отчётов');
       if(shortcut!==undefined)data.settings.shortcut=shortcut;
-      for (const key of ['gamingOverlay','startup','glass','autoContrast','quiet','greeting','nativeNotifications','islandOnly','hideFullscreen','systemNotifications','mediaControls','tasksEnabled','weatherEnabled','batteryNotifications','wifiNotifications','vpnNotifications']) if (typeof input[key] === 'boolean') data.settings[key] = input[key];
+      for (const key of ['clipboardNotifications','toolsEnabled','gamingOverlay','startup','glass','autoContrast','quiet','greeting','nativeNotifications','islandOnly','hideFullscreen','systemNotifications','mediaControls','tasksEnabled','weatherEnabled','batteryNotifications','wifiNotifications','vpnNotifications']) if (typeof input[key] === 'boolean') data.settings[key] = input[key];
       if (typeof input.city === 'string' && Number.isFinite(input.latitude) && Number.isFinite(input.longitude) && Math.abs(input.latitude) <= 90 && Math.abs(input.longitude) <= 180) Object.assign(data.settings, { city: input.city.slice(0,100), latitude: input.latitude, longitude: input.longitude });
       if(input.language!==undefined){if(!['ru','en'].includes(input.language))throw new Error('Неподдерживаемый язык');data.settings.language=input.language;}
       if(input.reportFolder!==undefined){if(typeof input.reportFolder!=='string'||input.reportFolder.length>3000||input.reportFolder.includes('\0')||(input.reportFolder&&!path.isAbsolute(input.reportFolder)))throw new Error('Укажите абсолютный путь к папке отчётов');data.settings.reportFolder=input.reportFolder;}

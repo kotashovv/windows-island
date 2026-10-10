@@ -1,5 +1,12 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('island', {
+  recordSources:()=>ipcRenderer.invoke('record-sources'),
+  recordRegion:id=>ipcRenderer.invoke('record-region',id),
+  recordBegin:options=>ipcRenderer.invoke('record-begin',options),
+  recordStarted:id=>ipcRenderer.invoke('record-started',id),
+  recordChunk:(id,bytes)=>ipcRenderer.invoke('record-chunk',id,bytes),
+  recordFinish:(id,error)=>ipcRenderer.invoke('record-finish',id,error),
+  recordOpenFolder:id=>ipcRenderer.invoke('record-open-folder',id),
   captureShortcut: value => ipcRenderer.invoke('shortcut-capture',value),
   pin: value => ipcRenderer.send('overlay-pin',value),
   setShortcut: value => ipcRenderer.invoke('shortcut',value),
@@ -25,7 +32,7 @@ contextBridge.exposeInMainWorld('island', {
   copyConfig: text => ipcRenderer.invoke('copy-config', text),
   contextMenu: () => ipcRenderer.send('capsule-menu'),
   on: (channel, callback) => {
-    if (!['state','runtime','notification','contrast','expand','overlay-blocked','update-progress'].includes(channel)) return () => {};
+    if (!['record-stop','state','runtime','notification','contrast','expand','overlay-blocked','update-progress'].includes(channel)) return () => {};
     const listener = (_, data) => callback(data); ipcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);
   }

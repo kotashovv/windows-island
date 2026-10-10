@@ -1,6 +1,6 @@
 {
   "name": "windows-island",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "A quiet, beautifully animated desktop island for Windows",
   "type": "module",
   "main": "electron/main.cjs",
@@ -21,7 +21,9 @@
     "build:demo": "node scripts/build-demo.mjs",
     "capture:demo": "node scripts/capture-demo.mjs",
     "measure:memory": "node scripts/measure-memory.mjs",
-    "test:overlay": "node tests/overlay-smoke.mjs"
+    "test:overlay": "node tests/overlay-smoke.mjs",
+    "test:recording": "node tests/recording-smoke.mjs",
+    "test:native-clipboard": "npm run build:native && powershell -NoProfile -ExecutionPolicy Bypass -File tests/native-clipboard.ps1"
   },
   "dependencies": {
     "@fontsource/manrope": "^5.3.0",

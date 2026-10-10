@@ -1,13 +1,14 @@
 import {demo,demoState,demoWeather} from './demo';
 import type {State,Bridge,Task,CalendarEvent} from './bridge';
-const defaults:State = {tasks:[],events:[],notifications:[],agentReports:[],settings:{shortcut:'Shift+F1',gamingOverlay:false,language:'ru',reportFolder:'',tasksEnabled:true,weatherEnabled:true,batteryNotifications:true,wifiNotifications:true,vpnNotifications:true,city:'Астрахань',latitude:46.35,longitude:48.04,startup:false,glass:true,autoContrast:true,quiet:false,greeting:true,nativeNotifications:true,islandOnly:true,hideFullscreen:true,systemNotifications:true,mediaControls:true}};
+const defaults:State = {tasks:[],events:[],notifications:[],agentReports:[],settings:{clipboardNotifications:true,toolsEnabled:true,shortcut:'Shift+F1',gamingOverlay:false,language:'ru',reportFolder:'',tasksEnabled:true,weatherEnabled:true,batteryNotifications:true,wifiNotifications:true,vpnNotifications:true,city:'Астрахань',latitude:46.35,longitude:48.04,startup:false,glass:true,autoContrast:true,quiet:false,greeting:true,nativeNotifications:true,islandOnly:true,hideFullscreen:true,systemNotifications:true,mediaControls:true}};
 const listeners = new Map<string,Set<(data:any)=>void>>();
 const emit = (channel:string,data:unknown) => listeners.get(channel)?.forEach(fn=>fn(data));
 const storageKey=demo?'windows-island-demo':'windows-island';
 const withDemoResources=(state:State)=>{if(demo)state.runtime={...state.runtime!,resources:state.settings.gamingOverlay?{updatedAt:new Date().toISOString(),cpu:24,gpu:72,cpuTemp:58,gpuTemp:65,fps:120,ramUsed:8.6,ramTotal:16,ramPercent:54}:null};return state;};
 const read = () => {try{const data=JSON.parse(localStorage.getItem(storageKey)||'null');return withDemoResources(data?{...structuredClone(defaults),...data,settings:{...defaults.settings,...data.settings}}:(demo?demoState(structuredClone(defaults.settings)):structuredClone(defaults)));}catch{return structuredClone(defaults);}};
 const api = async(url:string) => {const response=await fetch(url,{signal:AbortSignal.timeout(12000)});if(!response.ok)throw new Error('Сервис временно недоступен');return response.json();};
-export const browserBridge:Bridge = {
+const windowsOnly=async():Promise<never>=>{throw new Error('Запись экрана доступна в Windows-приложении');};
+export const browserBridge:Bridge = {recordSources:windowsOnly,recordRegion:windowsOnly,recordBegin:windowsOnly,recordStarted:windowsOnly,recordChunk:windowsOnly,recordFinish:windowsOnly,recordOpenFolder:windowsOnly,
   checkUpdates:async()=>{throw new Error('Обновления доступны в Windows-приложении');},downloadUpdate:async()=>{throw new Error('Обновления доступны в Windows-приложении');},restartUpdate:async()=>{},
   captureShortcut:async()=>{},pin:()=>{},setShortcut:async(value)=>{await browserBridge.act('settings.update',{shortcut:value});return value;},read:async()=>read(),resize:()=>{},hitRegion:()=>{},capture:()=>{},contextMenu:()=>{},
   mediaControl:async(action)=>{if(!demo)throw new Error('Управление музыкой доступно в Windows-приложении');const state=read();if(state.runtime?.media&&action==='toggle')state.runtime.media.playing=!state.runtime.media.playing;localStorage.setItem(storageKey,JSON.stringify(state));emit('state',state);},

@@ -1,9 +1,17 @@
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, shell, dialog, clipboard, powerMonitor, net, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, shell, dialog, clipboard, powerMonitor, net, globalShortcut, desktopCapturer } = require('electron');
 const {installShortcut}=require('./shortcut.cjs');
 const {shouldHide}=require('./overlay.cjs');
+const {RecordingFiles,validRegion}=require('./recording.cjs');
+let recorder,recordSource=null,regionWindow=null;
+const recordingBusy=()=>!!recorder?.active;
+function recordingChanged(value){runtimeUpdate({recording:value});refreshTray();if(!win||win.isDestroyed())return;win.webContents.setBackgroundThrottling(!recordingBusy());win.setContentProtection(recordingBusy());if(blocked){win.setOpacity(recordingBusy()?0:1);if(recordingBusy())win.showInactive();else win.hide();}}
+async function captureSources(){const displays=screen.getAllDisplays();return (await desktopCapturer.getSources({types:['screen'],thumbnailSize:{width:0,height:0}})).map(source=>{const display=displays.find(item=>String(item.id)===source.display_id);return {id:source.id,name:source.name,width:display?Math.round(display.size.width*display.scaleFactor):0,height:display?Math.round(display.size.height*display.scaleFactor):0,displayId:source.display_id};});}
+function requireTools(event){if(event.sender!==win?.webContents||!store.read().settings.toolsEnabled)throw new Error('Инструменты отключены в настройках');}
+function requireRenderer(event){if(event.sender!==win?.webContents)throw new Error('Недопустимый запрос');}
+function stopRecording(){if(recordingBusy())win.webContents.send('record-stop');}
 const {translate}=require('./locale.cjs');
 const tr=text=>translate(text,store?.read().settings.language);
-function refreshTray(){if(!tray||!store)return;const settings=store.read().settings;tray.setContextMenu(Menu.buildFromTemplate([{label:tr('Открыть Windows Island'),click:()=>win.webContents.send('expand',true)},...(settings.tasksEnabled?[{label:tr('Составить отчёт дня'),click:()=>writeReport().catch(error=>dialog.showErrorBox('Windows Island',error.message))}]:[]),{type:'separator'},{label:tr('Выйти'),click:()=>app.quit()}]));}
+function refreshTray(){if(!tray||!store)return;const settings=store.read().settings;tray.setContextMenu(Menu.buildFromTemplate([...(recordingBusy()?[{label:tr('Остановить запись'),click:stopRecording}]:[]),{label:tr('Открыть Windows Island'),click:()=>win.webContents.send('expand',true)},...(settings.tasksEnabled?[{label:tr('Составить отчёт дня'),click:()=>writeReport().catch(error=>dialog.showErrorBox('Windows Island',error.message))}]:[]),{type:'separator'},{label:tr('Выйти'),click:()=>app.quit()}]));}
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -41,7 +49,7 @@ const dev = process.argv.includes('--dev');
 app.setPath('userData',path.join(app.getPath('appData'),'windows-island'));
 if (process.env.ISLAND_TEST_DATA) {
   app.setPath('userData',process.env.ISLAND_TEST_DATA);
-  const testDesktop=path.join(process.env.ISLAND_TEST_DATA,'desktop');fs.mkdirSync(testDesktop,{recursive:true});app.setPath('desktop',testDesktop);
+  const testDesktop=path.join(process.env.ISLAND_TEST_DATA,'desktop');fs.mkdirSync(testDesktop,{recursive:true});app.setPath('desktop',testDesktop);const videos=path.join(process.env.ISLAND_TEST_DATA,'videos');fs.mkdirSync(videos,{recursive:true});app.setPath('videos',videos);
 }
 const PORT = process.env.ISLAND_TEST_DATA ? 47832 : 47831;
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -56,6 +64,11 @@ else {
     const position = bounds('collapsed');
     win = new BrowserWindow({ ...position, transparent: true, frame: false, resizable: false, maximizable: false, minimizable: false, skipTaskbar: true, show: false, hasShadow: false, backgroundColor: '#00000000', alwaysOnTop: true, webPreferences: { preload: path.join(__dirname,'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
     win.setAlwaysOnTop(true, 'screen-saver');
+    recorder=new RecordingFiles({folder:path.join(app.getPath('videos'),'Windows Island'),onState:value=>{recordingChanged(value);if(value.status==='idle')setImmediate(()=>recordingChanged(recorder.state));},onSaved:file=>{const item={...normalizeNotification({source:'island',appName:'Windows Island',title:'Ролик создан',body:file.name,kind:'recording-saved',transport:'system'}),transient:true,recordingId:file.id};if(!blocked&&!store.read().settings.quiet)win.webContents.send('notification',item);}});
+    win.webContents.session.setDisplayMediaRequestHandler(async(request,callback)=>{const grant=recordSource;recordSource=null;if(!grant||request.frame!==win.webContents.mainFrame||!recordingBusy()||Date.now()>grant.expires){callback({});return;}try{const sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize:{width:0,height:0}});const video=sources.find(item=>item.id===grant.id);if(!video||!recordingBusy())throw new Error('Экран недоступен');callback({video,...(grant.audio?{audio:'loopback'}:{})});}catch{callback({});}});
+    win.webContents.session.setPermissionRequestHandler((contents,permission,callback)=>callback(contents===win.webContents&&recordingBusy()&&['media','display-capture'].includes(permission)));
+    win.webContents.session.setPermissionCheckHandler((contents,permission)=>contents===win.webContents&&recordingBusy()&&['media','display-capture'].includes(permission));
+    win.webContents.on('render-process-gone',()=>{recordSource=null;recorder?.emergencyClose();});
     win.on('close',event=>{if(!allowClose){event.preventDefault();collapseWindow();}});
     win.on('session-end',()=>{allowClose=true;pauseRunning();windows?.stop();server?.close();try{if(connectionFile)fs.unlinkSync(connectionFile);}catch{}});
     win.webContents.on('before-input-event',(event,input)=>{
@@ -76,7 +89,7 @@ else {
     windows=new WindowsIntegration({app,onFullscreen:setBlocked,onNotification:(item,options)=>receiveNotification(item,options),onStatus:runtimeUpdate,onIcon:(source,icon)=>runtimeUpdate({icons:{...runtime.icons,[source]:icon}})});
     windows.start();windows.configure(store.read().settings);windows.setResourcesVisible(['capsule','expanded','toast','dragging'].includes(mode));
     try{registerShortcut(store.read().settings.shortcut);}catch(error){runtimeUpdate({shortcutError:error.message});}
-    powerMonitor.on('suspend',pauseRunning);
+    powerMonitor.on('suspend',()=>{pauseRunning();stopRecording();});
     const reminded = new Set();
     setInterval(() => { const now = Date.now(); store.read().events.forEach(e => { const delta = Date.parse(e.start)-now; if (delta >= 0 && delta < 5*60000 && !reminded.has(e.id)) { reminded.add(e.id); notify('Скоро в календаре',e.title); } }); }, 30000).unref();
   }).catch(error => { dialog.showErrorBox('Windows Island', error.message); app.quit(); });
@@ -86,7 +99,7 @@ function bounds(value) {
   const w=Math.min(440,width-24);
   return { x:Math.round(x+(width-w)/2),y:y-12,width:w,height:Math.min(620,height+12) };
 }
-function setBlocked(fullscreen){const next=shouldHide(store.read().settings,fullscreen,pinned);runtimeUpdate({fullscreen});if(blocked===next)return;blocked=next;win.webContents.send('overlay-blocked',blocked);if(blocked){mode='collapsed';windows?.setResourcesVisible(false);win.hide();}else{win.setBounds(bounds('collapsed'));win.showInactive();}}
+function setBlocked(fullscreen){const next=shouldHide(store.read().settings,fullscreen,pinned);runtimeUpdate({fullscreen});if(blocked===next)return;blocked=next;win.webContents.send('overlay-blocked',blocked);if(blocked){mode='collapsed';windows?.setResourcesVisible(false);if(recordingBusy()){win.setOpacity(0);win.showInactive();win.setIgnoreMouseEvents(true,{forward:true});ignoringMouse=true;}else win.hide();}else{win.setOpacity(1);win.setBounds(bounds('collapsed'));win.showInactive();}}
 function receiveNotification(input,options={show:true,report:false}){
   if(input.transport==='system'&&!options.report){
     const item={...normalizeNotification(input),transient:true};
@@ -104,7 +117,7 @@ function act(action, input) {
   if(action==='settings.update'&&input.shortcut!==undefined)registerShortcut(input.shortcut);
   let result;try{result=store.mutate(action,input);}catch(error){if(previous!==registeredShortcut)registerShortcut(previous);throw error;}
   if (action === 'settings.update' && typeof input.startup === 'boolean') app.setLoginItemSettings({openAtLogin:input.startup, path: process.env.PORTABLE_EXECUTABLE_FILE || app.getPath('exe'), args:app.isPackaged?[]:[app.getAppPath()]});
-  if(action==='settings.update'){if(!store.read().settings.gamingOverlay)pinned=false;refreshTray();windows?.configure(store.read().settings);setBlocked(runtime.fullscreen);}
+  if(action==='settings.update'){if(input.toolsEnabled===false)stopRecording();if(!store.read().settings.gamingOverlay)pinned=false;refreshTray();windows?.configure(store.read().settings);setBlocked(runtime.fullscreen);}
   win.webContents.send('state',readState());
   if (action === 'task.add'&&!input.source) notify('Новая задача',result.title);
   if (action === 'event.add') notify('Событие добавлено',result.title);
@@ -139,6 +152,31 @@ ipcMain.on('pointer-capture',(_,value)=>{pointerCaptured=value===true;updateHitR
 ipcMain.on('overlay-pin',(_,value)=>{pinned=value===true&&store.read().settings.gamingOverlay;setBlocked(runtime.fullscreen);});
 ipcMain.handle('shortcut',(_,value)=>{act('settings.update',{shortcut:value});return registeredShortcut;});
 ipcMain.handle('shortcut-capture',(_,value)=>{shortcutCapturing=value===true;if(shortcutCapturing){if(registeredShortcut)globalShortcut.unregister(registeredShortcut);}else try{registerShortcut(store.read().settings.shortcut);}catch(error){runtimeUpdate({shortcutError:error.message});}});
+
+ipcMain.handle('record-sources',async event=>{requireTools(event);return captureSources();});
+ipcMain.handle('record-region',async(event,id)=>{
+  requireTools(event);if(recordingBusy()||regionWindow)throw new Error('Запись уже запущена');
+  const sources=await captureSources(),source=sources.find(item=>item.id===id);if(!source)throw new Error('Экран недоступен');
+  const display=screen.getAllDisplays().find(item=>String(item.id)===source.displayId);if(!display)throw new Error('Экран недоступен');
+  dialogOpen=true;
+  return new Promise((resolve,reject)=>{
+    const selector=new BrowserWindow({...display.bounds,frame:false,transparent:true,skipTaskbar:true,alwaysOnTop:true,resizable:false,show:false,webPreferences:{preload:path.join(__dirname,'region-preload.cjs'),sandbox:true,contextIsolation:true,nodeIntegration:false}});regionWindow=selector;
+    let result=null;const onResult=(event,value)=>{if(event.sender!==selector.webContents)return;try{result=value===null?null:validRegion(value);selector.close();}catch{}};
+    ipcMain.on('record-region-result',onResult);selector.setAlwaysOnTop(true,'screen-saver');selector.setContentProtection(true);
+    selector.webContents.setWindowOpenHandler(()=>({action:'deny'}));selector.webContents.on('will-navigate',event=>event.preventDefault());
+    selector.once('closed',()=>{ipcMain.removeListener('record-region-result',onResult);regionWindow=null;dialogOpen=false;resolve(result);if(!blocked){win.showInactive();win.focus();}});
+    selector.loadFile(path.join(__dirname,'region.html')).then(()=>selector.show()).catch(error=>{reject(error);selector.close();});
+  });
+});
+ipcMain.handle('record-begin',async(event,options)=>{
+  requireTools(event);const sources=await captureSources();if(!sources.some(item=>item.id===options?.sourceId))throw new Error('Экран недоступен');
+  const result=await recorder.begin(options);recordSource={id:options.sourceId,audio:['system','both'].includes(options.audio),expires:Date.now()+15000};recordingChanged(recorder.state);return result;
+});
+ipcMain.handle('record-started',(event,id)=>{requireRenderer(event);recorder.started(id);});
+ipcMain.handle('record-chunk',(event,id,bytes)=>{requireRenderer(event);return recorder.append(id,bytes);});
+ipcMain.handle('record-finish',async(event,id,error)=>{requireRenderer(event);recordSource=null;try{return await recorder.finish(id,typeof error==='string'?error.slice(0,1000):'');}finally{recordingChanged(recorder.state);}});
+ipcMain.handle('record-open-folder',async(event,id)=>{requireRenderer(event);const error=await shell.openPath(recorder.folderFor(id));if(error)throw new Error(error);});
+
 ipcMain.handle('weather',weather);
 ipcMain.handle('check-updates',()=>updater.check());
 ipcMain.handle('download-update',()=>updater.download());
@@ -157,7 +195,7 @@ ipcMain.handle('media-source',async(_,sourceId)=>{
 });
 ipcMain.handle('notification-settings',()=>shell.openExternal('ms-settings:notifications'));
 ipcMain.handle('mcp-config',mcpConfig);
-ipcMain.handle('copy-config',(_,text)=>clipboard.writeText(String(text)));
+ipcMain.handle('copy-config',(_,text)=>{clipboard.writeText(String(text));windows?.send({type:'clipboard-baseline'});});
 ipcMain.on('capsule-menu',event=>{
   if(event.sender!==win?.webContents||win.isDestroyed())return;
   dialogOpen=true;pointerCaptured=false;updateHitRegion();
@@ -198,6 +236,7 @@ function startServer() {
   server.on('error',error=>notify('MCP недоступен',error.message));
   server.listen(PORT,'127.0.0.1',()=>fs.writeFileSync(connectionFile,JSON.stringify({url:`http://127.0.0.1:${PORT}`,token})));
 }
-function pauseRunning(){for(const task of store?.read().tasks||[])if(task.status==='running')store.mutate('task.pause',{id:task.id});if(win&&!win.isDestroyed())win.webContents.send('state',store.read());}
-app.on('before-quit',event=>{globalShortcut.unregisterAll();allowClose=true;if(windows&&!quitting){event.preventDefault();quitting=true;windows.stop();setTimeout(()=>app.quit(),500);return;}pauseRunning();server?.close();try{if(connectionFile)fs.unlinkSync(connectionFile);}catch{}});
+function pauseRunning(){for(const task of store?.read().tasks||[])if(task.status==='running')store.mutate('task.pause',{id:task.id});if(win&&!win.isDestroyed())win.webContents.send('state',readState());}
+let recordingQuit=false;
+app.on('before-quit',event=>{if(recordingBusy()&&!recordingQuit){event.preventDefault();recordingQuit=true;stopRecording();const deadline=Date.now()+10000;const timer=setInterval(async()=>{if(!recordingBusy()||Date.now()>deadline){clearInterval(timer);await recorder.emergencyClose();app.quit();}},100);return;}globalShortcut.unregisterAll();allowClose=true;if(windows&&!quitting){event.preventDefault();quitting=true;windows.stop();setTimeout(()=>app.quit(),500);return;}pauseRunning();server?.close();try{if(connectionFile)fs.unlinkSync(connectionFile);}catch{}});
 app.on('window-all-closed',()=>app.quit());

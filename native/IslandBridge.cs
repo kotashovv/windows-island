@@ -162,8 +162,9 @@ class IslandBridge {
   static void ReadCommands(){try{string line;while(Running&&(line=Console.ReadLine())!=null){try{
     var input=Json.Deserialize<Dictionary<string,object>>(line);string type=Convert.ToString(input["type"]);
     if(type=="shutdown"){Running=false;break;}
+    if(type=="clipboard-baseline")ClipboardBridge.Baseline();
     if(type=="resources-visible")ResourceBridge.Visible=Convert.ToBoolean(input["visible"]);
-    if(type=="configure"){ResourceBridge.Enabled=input.ContainsKey("resources")&&Convert.ToBoolean(input["resources"]);PowerEnabled=!input.ContainsKey("power")||Convert.ToBoolean(input["power"]);WifiEnabled=!input.ContainsKey("wifi")||Convert.ToBoolean(input["wifi"]);FullscreenEnabled=!input.ContainsKey("fullscreen")||Convert.ToBoolean(input["fullscreen"]);SystemEnabled=Convert.ToBoolean(input["system"]);VpnEnabled=Convert.ToBoolean(input["vpn"]);MediaBridge.Enabled=Convert.ToBoolean(input["media"]);LastSystem="";}
+    if(type=="configure"){ClipboardBridge.Configure(input.ContainsKey("clipboard")&&Convert.ToBoolean(input["clipboard"]));ResourceBridge.Enabled=input.ContainsKey("resources")&&Convert.ToBoolean(input["resources"]);PowerEnabled=!input.ContainsKey("power")||Convert.ToBoolean(input["power"]);WifiEnabled=!input.ContainsKey("wifi")||Convert.ToBoolean(input["wifi"]);FullscreenEnabled=!input.ContainsKey("fullscreen")||Convert.ToBoolean(input["fullscreen"]);SystemEnabled=Convert.ToBoolean(input["system"]);VpnEnabled=Convert.ToBoolean(input["vpn"]);MediaBridge.Enabled=Convert.ToBoolean(input["media"]);LastSystem="";}
     if(type=="media-control")MediaBridge.Queue(input);
     if(type=="banners"){var ids=(System.Collections.IEnumerable)input["apps"];var strings=new List<string>();foreach(var id in ids)strings.Add(Convert.ToString(id));Banners(strings.ToArray(),Convert.ToBoolean(input["exclusive"]));}
     if(type=="icons")Icons();
@@ -177,7 +178,7 @@ class IslandBridge {
     ParentPid=args.Length>0?Int32.Parse(args[0]):0;string dir=args.Length>1?args[1]:Environment.CurrentDirectory;Directory.CreateDirectory(dir);BackupFile=Path.Combine(dir,"banner-backup.json");
     try{if(File.Exists(BackupFile))Backup=Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(BackupFile));Restore();
       var reader=new Thread(ReadCommands);reader.IsBackground=true;reader.Start();var media=new Thread(MediaBridge.Run);media.IsBackground=true;media.Start();var resources=new Thread(ResourceBridge.Run);resources.IsBackground=true;resources.Start();bool? previous=null;int ticks=0;Icons();
-      while(Running){try{bool value=FullscreenEnabled&&Fullscreen();if(value!=previous){Emit(new {type="fullscreen",active=value});previous=value;}if(ticks++%8==0&&(SystemEnabled||VpnEnabled))SystemSnapshot();if(ticks%60==0){if(ParentPid>0){try{using(var parent=Process.GetProcessById(ParentPid)){if(parent.HasExited){Running=false;break;}}}catch(ArgumentException){Running=false;break;}}Icons();}}catch(Exception error){Emit(new {type="error",message=error.Message});}Thread.Sleep(250);}
+      while(Running){try{ClipboardBridge.Poll();bool value=FullscreenEnabled&&Fullscreen();if(value!=previous){Emit(new {type="fullscreen",active=value});previous=value;}if(ticks++%8==0&&(SystemEnabled||VpnEnabled))SystemSnapshot();if(ticks%60==0){if(ParentPid>0){try{using(var parent=Process.GetProcessById(ParentPid)){if(parent.HasExited){Running=false;break;}}}catch(ArgumentException){Running=false;break;}}Icons();}}catch(Exception error){Emit(new {type="error",message=error.Message});}Thread.Sleep(250);}
     }finally{try{Restore();}catch{}}
   }
 }
