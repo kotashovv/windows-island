@@ -1,6 +1,6 @@
 {
   "name": "windows-island",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "A quiet, beautifully animated desktop island for Windows",
   "type": "module",
   "main": "electron/main.cjs",
@@ -15,7 +15,9 @@
     "dist": "npm run build && electron-builder --win portable",
     "test": "node --test tests/*.test.mjs",
     "test:smoke": "node tests/smoke.mjs",
-    "mcp": "node mcp/server.mjs"
+    "mcp": "node mcp/server.mjs",
+    "build:demo": "node scripts/build-demo.mjs",
+    "capture:demo": "node scripts/capture-demo.mjs"
   },
   "dependencies": {
     "@fontsource/manrope": "^5.3.0",
@@ -40,7 +42,7 @@
     "wait-on": "^8.0.3"
   },
   "build": {
-    "compression": "store",
+    "compression": "normal",
     "appId": "app.windowsisland.desktop",
     "productName": "Windows Island",
     "directories": {
@@ -52,7 +54,10 @@
       "package.json"
     ],
     "extraResources": [
-      {"from":"native/bin/IslandBridge.exe","to":"native/IslandBridge.exe"},
+      {
+        "from": "native/bin/IslandBridge.exe",
+        "to": "native/IslandBridge.exe"
+      },
       {
         "from": "mcp/dist/server.cjs",
         "to": "mcp/server.cjs"

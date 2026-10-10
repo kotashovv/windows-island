@@ -6,6 +6,9 @@ contextBridge.exposeInMainWorld('island', {
   hitRegion: region => ipcRenderer.send('hit-region',region),
   capture: value => ipcRenderer.send('pointer-capture',value),
   weather: () => ipcRenderer.invoke('weather'),
+  checkUpdates: () => ipcRenderer.invoke('check-updates'),
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  restartUpdate: () => ipcRenderer.invoke('restart-update'),
   cities: name => ipcRenderer.invoke('cities', name),
   report: () => ipcRenderer.invoke('report'),
   open: url => ipcRenderer.invoke('open', url),
@@ -16,7 +19,7 @@ contextBridge.exposeInMainWorld('island', {
   copyConfig: text => ipcRenderer.invoke('copy-config', text),
   quit: () => ipcRenderer.send('quit'),
   on: (channel, callback) => {
-    if (!['state','notification','contrast','expand','overlay-blocked'].includes(channel)) return () => {};
+    if (!['state','notification','contrast','expand','overlay-blocked','update-progress'].includes(channel)) return () => {};
     const listener = (_, data) => callback(data); ipcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);
   }

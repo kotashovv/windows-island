@@ -1,20 +1,25 @@
+import { demo, demoState, demoWeather } from './demo';
 export type Task = {id:string;title:string;notes:string;url:string;deadline:string;priority:'high'|'normal'|'low';source:string;status:'todo'|'running'|'done'|'needs_input';createdAt:string;completedAt?:string;startedAt?:string;elapsed:number;sessions:{start:string;end:string}[]};
 export type CalendarEvent = {id:string;title:string;start:string;end:string;url:string;location:string;source:string};
 export type JumpTarget={app:'codex'|'claude'|'slack'|'vscode'|'cursor';url?:string};
 export type IslandNotification={id:string;source:string;appName:string;title:string;body:string;status:'info'|'completed'|'needs_input'|'failed';target:JumpTarget|null;icon:string;createdAt:string;read:boolean;eventId?:string};
 export type Settings = {city:string;latitude:number;longitude:number;startup:boolean;glass:boolean;autoContrast:boolean;quiet:boolean;greeting:boolean;nativeNotifications:boolean;islandOnly:boolean;hideFullscreen:boolean};
 export type State = {tasks:Task[];events:CalendarEvent[];notifications:IslandNotification[];agentReports:{id:string;source:string;taskId:string;status:string;summary:string;title:string;createdAt:string}[];settings:Settings;runtime?:{monitor:string;notifications:string;exclusive:boolean;fullscreen:boolean;error?:string;sources?:string[];icons?:Record<string,string>}};
-export type Weather = {temperature:number;code:number;high:number;low:number;city:string;updatedAt:string};
+export type WeatherDay = {date:string;code:number;high:number;low:number;precipitation:number|null};
+export type Weather = {temperature:number;code:number;high:number;low:number;city:string;updatedAt:string;days:WeatherDay[];demo?:boolean};
 export type City = {name:string;country:string;admin1?:string;latitude:number;longitude:number};
-type Bridge = {read:()=>Promise<State>;act:(action:string,input:Record<string,unknown>)=>Promise<unknown>;resize:(mode:string)=>void;hitRegion:(region:{x:number;y:number;width:number;height:number;radius:number})=>void;capture:(value:boolean)=>void;weather:()=>Promise<Weather>;cities:(name:string)=>Promise<City[]>;report:()=>Promise<string>;open:(url:string)=>Promise<unknown>;jump:(target:JumpTarget)=>Promise<unknown>;notificationSettings:()=>Promise<unknown>;importCalendar:()=>Promise<number>;mcpConfig:()=>Promise<string>;copyConfig:(text:string)=>Promise<void>;quit:()=>void;on:(channel:string,callback:(data:any)=>void)=>()=>void};
+export type ReleaseInfo = {available:boolean;current:string;version:string;empty?:boolean;url?:string;size?:number};
+type Bridge = {read:()=>Promise<State>;act:(action:string,input:Record<string,unknown>)=>Promise<unknown>;resize:(mode:string)=>void;hitRegion:(region:{x:number;y:number;width:number;height:number;radius:number})=>void;capture:(value:boolean)=>void;weather:()=>Promise<Weather>;checkUpdates:()=>Promise<ReleaseInfo>;downloadUpdate:()=>Promise<{ready:boolean;version:string}>;restartUpdate:()=>Promise<unknown>;cities:(name:string)=>Promise<City[]>;report:()=>Promise<string>;open:(url:string)=>Promise<unknown>;jump:(target:JumpTarget)=>Promise<unknown>;notificationSettings:()=>Promise<unknown>;importCalendar:()=>Promise<number>;mcpConfig:()=>Promise<string>;copyConfig:(text:string)=>Promise<void>;quit:()=>void;on:(channel:string,callback:(data:any)=>void)=>()=>void};
 declare global {interface Window {island?:Bridge}}
 export const native = !!window.island;
 const defaults:State = {tasks:[],events:[],notifications:[],agentReports:[],settings:{city:'Астрахань',latitude:46.35,longitude:48.04,startup:false,glass:true,autoContrast:true,quiet:false,greeting:true,nativeNotifications:true,islandOnly:true,hideFullscreen:true}};
 const listeners = new Map<string,Set<(data:any)=>void>>();
 const emit = (channel:string,data:unknown) => listeners.get(channel)?.forEach(fn=>fn(data));
-const read = () => {try{const data=JSON.parse(localStorage.getItem('windows-island')||'null');return data?{...structuredClone(defaults),...data,settings:{...defaults.settings,...data.settings}}:structuredClone(defaults);}catch{return structuredClone(defaults);}};
+const storageKey=demo?'windows-island-demo':'windows-island';
+const read = () => {try{const data=JSON.parse(localStorage.getItem(storageKey)||'null');return data?{...structuredClone(defaults),...data,settings:{...defaults.settings,...data.settings}}:(demo?demoState(structuredClone(defaults.settings)):structuredClone(defaults));}catch{return structuredClone(defaults);}};
 const api = async(url:string) => {const response=await fetch(url,{signal:AbortSignal.timeout(12000)});if(!response.ok)throw new Error('Сервис временно недоступен');return response.json();};
 export const bridge:Bridge = window.island || {
+  checkUpdates:async()=>{throw new Error('Обновления доступны в Windows-приложении');},downloadUpdate:async()=>{throw new Error('Обновления доступны в Windows-приложении');},restartUpdate:async()=>{},
   read:async()=>read(),resize:()=>{},hitRegion:()=>{},capture:()=>{},quit:()=>{},
   on:(channel,callback)=>{if(!listeners.has(channel))listeners.set(channel,new Set());listeners.get(channel)!.add(callback);return()=>{listeners.get(channel)?.delete(callback);};},
   act:async(action,input)=>{
@@ -31,9 +36,9 @@ export const bridge:Bridge = window.island || {
     else if(action==='notifications.read-all')state.notifications.forEach(n=>n.read=true);
     else if(action==='event.add'){const event={...input,id:crypto.randomUUID(),source:'Вручную'} as CalendarEvent;state.events.push(event);result=event;}
     else if(action==='event.delete'){state.events=state.events.filter(e=>e.id!==input.id);}
-    localStorage.setItem('windows-island',JSON.stringify(state));emit('state',state);return result;
+    localStorage.setItem(storageKey,JSON.stringify(state));emit('state',state);return result;
   },
-  weather:async()=>{const s=read().settings;const d=await api(`https://api.open-meteo.com/v1/forecast?latitude=${s.latitude}&longitude=${s.longitude}&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1`);return {temperature:Math.round(d.current.temperature_2m),code:d.current.weather_code,high:Math.round(d.daily.temperature_2m_max[0]),low:Math.round(d.daily.temperature_2m_min[0]),city:s.city,updatedAt:new Date().toISOString()};},
+  weather:async()=>{const s=read().settings;if(demo)return demoWeather(s.city);const d=await api(`https://api.open-meteo.com/v1/forecast?latitude=${s.latitude}&longitude=${s.longitude}&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=7`);return {temperature:Math.round(d.current.temperature_2m),code:d.current.weather_code,high:Math.round(d.daily.temperature_2m_max[0]),low:Math.round(d.daily.temperature_2m_min[0]),city:s.city,updatedAt:new Date().toISOString(),days:d.daily.time.slice(0,7).map((date:string,i:number)=>({date,code:d.daily.weather_code[i],high:Math.round(d.daily.temperature_2m_max[i]),low:Math.round(d.daily.temperature_2m_min[i]),precipitation:d.daily.precipitation_probability_max?.[i]??null}))};},
   cities:async(name)=> (await api(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=5&language=ru`)).results||[],
   open:async(url)=>{const parsed=new URL(url);if(!['https:','http:'].includes(parsed.protocol))throw new Error('Неверная ссылка');window.open(url,'_blank','noopener,noreferrer');},
   jump:async(target)=>{if(target.url&&/^https?:/.test(target.url))window.open(target.url,'_blank','noopener,noreferrer');else throw new Error('Переход в приложение доступен в Windows Island для Windows');},

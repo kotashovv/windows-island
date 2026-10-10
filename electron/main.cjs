@@ -6,6 +6,9 @@ const { randomBytes } = require('node:crypto');
 const { createStore, dayKey, reportMarkdown } = require('./store.cjs');
 const {WindowsIntegration}=require('./windows.cjs');
 const {validateTarget}=require('./notifications.cjs');
+const {forecastUrl,normalizeWeather}=require('./weather.cjs');
+const {createUpdater}=require('./updates.cjs');
+const updater=createUpdater({app,fetch:(...args)=>net.fetch(...args),onProgress:value=>{if(win&&!win.isDestroyed())win.webContents.send('update-progress',value);}});
 let win, tray, store, server, token, connectionFile;
 let dialogOpen=false;
 let mode = 'collapsed';
@@ -46,7 +49,7 @@ else {
     win.webContents.on('will-navigate', (event) => event.preventDefault());
     win.once('ready-to-show', () => win.showInactive());
     if (dev) await win.loadURL('http://127.0.0.1:5173'); else await win.loadFile(path.join(__dirname,'../dist/index.html'));
-    win.on('blur', () => { if (mode === 'expanded'&&!dialogOpen) win.webContents.send('expand', false); });
+    win.on('blur', () => { if (['expanded','capsule'].includes(mode)&&!dialogOpen) win.webContents.send('expand', false); });
     screen.on('display-metrics-changed', () => win.setBounds(bounds(mode)));
     const icon = nativeImage.createFromPath(path.join(__dirname,'assets','icon.png')).resize({width:20,height:20});
     tray = new Tray(icon); tray.setToolTip('Windows Island');
@@ -84,9 +87,9 @@ function act(action, input) {
 }
 async function weather() {
   const s = store.read().settings;
-  const response = await net.fetch(`https://api.open-meteo.com/v1/forecast?latitude=${s.latitude}&longitude=${s.longitude}&current=temperature_2m,weather_code,is_day&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1`,{signal:AbortSignal.timeout(12000)});
+  const response = await net.fetch(forecastUrl(s),{signal:AbortSignal.timeout(12000)});
   if (!response.ok) throw new Error('Погода временно недоступна');
-  const data = await response.json(); return {temperature:Math.round(data.current.temperature_2m),code:data.current.weather_code,high:Math.round(data.daily.temperature_2m_max[0]),low:Math.round(data.daily.temperature_2m_min[0]),city:s.city,updatedAt:new Date().toISOString()};
+  return normalizeWeather(await response.json(),s.city);
 }
 async function cities(name) {
   if (typeof name !== 'string' || name.length < 2 || name.length > 100) return [];
@@ -105,10 +108,13 @@ function mcpConfig() {
 }
 ipcMain.handle('read',()=>readState());
 ipcMain.handle('act',(_,action,input)=>act(action,input));
-ipcMain.on('resize',(_,value)=>{if(!['collapsed','mini','expanded','toast','dragging'].includes(value)||blocked)return;mode=value;if(value==='expanded'&&!win.isFocused())win.focus();});
+ipcMain.on('resize',(_,value)=>{if(!['collapsed','mini','capsule','expanded','toast','dragging'].includes(value)||blocked)return;mode=value;if(['capsule','expanded'].includes(value)&&!win.isFocused())win.focus();});
 ipcMain.on('hit-region',(_,value)=>{if(!value||!['x','y','width','height','radius'].every(key=>Number.isFinite(value[key])))return;hitRegion={x:value.x,y:value.y,width:Math.max(0,Math.min(440,value.width)),height:Math.max(0,Math.min(620,value.height)),radius:Math.max(0,Math.min(100,value.radius))};updateHitRegion();});
 ipcMain.on('pointer-capture',(_,value)=>{pointerCaptured=value===true;updateHitRegion();});
 ipcMain.handle('weather',weather);
+ipcMain.handle('check-updates',()=>updater.check());
+ipcMain.handle('download-update',()=>updater.download());
+ipcMain.handle('restart-update',()=>updater.restart());
 ipcMain.handle('cities',(_,name)=>cities(name));
 ipcMain.handle('report',writeReport);
 ipcMain.handle('open',(_,url)=>{const parsed=new URL(url);if(!['https:','http:'].includes(parsed.protocol)) throw new Error('Недопустимая ссылка');return shell.openExternal(parsed.href);});
