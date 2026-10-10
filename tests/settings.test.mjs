@@ -15,9 +15,9 @@ test('disabling tasks saves the active session, blocks task writes, preserves ta
 test('language, folder and feature settings persist; invalid settings are atomic; reports keep user text',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'island-settings-'));try{
   const file=path.join(dir,'state.json'),store=createStore(file);const task=store.mutate('task.add',{title:'Моя задача',notes:'Мои заметки'});store.mutate('task.complete',{id:task.id});
-  for(const input of [{tasksEnabled:false,language:'xx'},{weatherEnabled:false,reportFolder:'relative/path'},{quiet:true,reportFolder:'C:\\bad\0folder'}]){const before=store.read();assert.throws(()=>store.mutate('settings.update',input));assert.deepEqual(store.read(),before);}
-  store.mutate('settings.update',{language:'en',reportFolder:dir,weatherEnabled:false,batteryNotifications:false,wifiNotifications:false,vpnNotifications:false,mediaControls:false});
-  const saved=createStore(file).read();assert.equal(saved.settings.language,'en');assert.equal(saved.settings.reportFolder,dir);assert.equal(saved.settings.vpnNotifications,false);
+  for(const input of [{tasksEnabled:false,language:'xx'},{weatherEnabled:false,reportFolder:'relative/path'},{quiet:true,reportFolder:'C:\\bad\0folder'},{gamingOverlay:true,shortcut:'Shift+F25'},{shortcut:'Control+F8',language:'xx'}]){const before=store.read();assert.throws(()=>store.mutate('settings.update',input));assert.deepEqual(store.read(),before);}
+  store.mutate('settings.update',{language:'en',shortcut:'Shift+Control+F8',gamingOverlay:true,reportFolder:dir,weatherEnabled:false,batteryNotifications:false,wifiNotifications:false,vpnNotifications:false,mediaControls:false});
+  const saved=createStore(file).read();assert.equal(saved.settings.language,'en');assert.equal(saved.settings.shortcut,'Control+Shift+F8');assert.equal(saved.settings.gamingOverlay,true);assert.equal(saved.settings.reportFolder,dir);assert.equal(saved.settings.vpnNotifications,false);
   const report=reportMarkdown(saved,dayKey());assert.match(report,/Completed today: 1/);assert.match(report,/Моя задача/);assert.match(report,/Мои заметки/);assert.match(report,/## Tasks/);
   store.mutate('settings.update',{reportFolder:''});assert.equal(store.read().settings.reportFolder,'');
  }finally{fs.rmSync(dir,{recursive:true,force:true});}

@@ -1,4 +1,6 @@
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, shell, dialog, clipboard, powerMonitor, net } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, shell, dialog, clipboard, powerMonitor, net, globalShortcut } = require('electron');
+const {installShortcut}=require('./shortcut.cjs');
+const {shouldHide}=require('./overlay.cjs');
 const {translate}=require('./locale.cjs');
 const tr=text=>translate(text,store?.read().settings.language);
 function refreshTray(){if(!tray||!store)return;const settings=store.read().settings;tray.setContextMenu(Menu.buildFromTemplate([{label:tr('Открыть Windows Island'),click:()=>win.webContents.send('expand',true)},...(settings.tasksEnabled?[{label:tr('Составить отчёт дня'),click:()=>writeReport().catch(error=>dialog.showErrorBox('Windows Island',error.message))}]:[]),{type:'separator'},{label:tr('Выйти'),click:()=>app.quit()}]));}
@@ -15,7 +17,9 @@ const {createUpdater}=require('./updates.cjs');
 const updater=createUpdater({app,fetch:(...args)=>net.fetch(...args),onProgress:value=>{if(win&&!win.isDestroyed())win.webContents.send('update-progress',value);}});
 let win, tray, store, server, token, connectionFile;
 let dialogOpen=false;
-let mode = 'collapsed';
+let mode = 'collapsed',pinned=false,registeredShortcut='',shortcutCapturing=false;
+function summon(){if(blocked)return;win.showInactive();win.webContents.send('expand',mode==='expanded'?false:true);}
+function registerShortcut(next){registeredShortcut=installShortcut(globalShortcut,registeredShortcut,next,summon);runtimeUpdate({shortcutError:''});return registeredShortcut;}
 let hitRegion={x:154,y:0,width:132,height:26,radius:18},satellites=[],pointerCaptured=false,ignoringMouse=false;
 function updateHitRegion(){
   if(!win||win.isDestroyed()||blocked)return;
@@ -29,7 +33,7 @@ function updateHitRegion(){
   if(ignore!==ignoringMouse){ignoringMouse=ignore;win.setIgnoreMouseEvents(ignore,{forward:true});}
 }
 let windows,blocked=false,quitting=false,allowClose=false;
-function collapseWindow(){pointerCaptured=false;if(win&&!win.isDestroyed())win.webContents.send('expand',false);updateHitRegion();}
+function collapseWindow(){pinned=false;setBlocked(runtime.fullscreen);pointerCaptured=false;if(win&&!win.isDestroyed())win.webContents.send('expand',false);updateHitRegion();}
 let runtime={monitor:'starting',notifications:'starting',exclusive:false,fullscreen:false,icons:{}};
 const readState=()=>({...store.read(),runtime});
 function runtimeUpdate(change){const next={...runtime,...change};if(JSON.stringify(next)===JSON.stringify(runtime))return;runtime=next;if(win&&!win.isDestroyed())win.webContents.send('runtime',runtime);}
@@ -55,14 +59,14 @@ else {
     win.on('close',event=>{if(!allowClose){event.preventDefault();collapseWindow();}});
     win.on('session-end',()=>{allowClose=true;pauseRunning();windows?.stop();server?.close();try{if(connectionFile)fs.unlinkSync(connectionFile);}catch{}});
     win.webContents.on('before-input-event',(event,input)=>{
-      if(input.type==='keyDown'&&((input.control&&!input.alt&&!input.meta&&input.key.toLowerCase()==='w')||(input.alt&&!input.control&&input.key==='F4'))){event.preventDefault();collapseWindow();}
+      if(!shortcutCapturing&&input.type==='keyDown'&&((input.control&&!input.alt&&!input.meta&&input.key.toLowerCase()==='w')||(input.alt&&!input.control&&input.key==='F4'))){event.preventDefault();collapseWindow();}
     });
     setInterval(updateHitRegion,32).unref();
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', (event) => event.preventDefault());
     win.once('ready-to-show', () => win.showInactive());
     if (dev) await win.loadURL('http://127.0.0.1:5173'); else await win.loadFile(path.join(__dirname,'../dist/index.html'));
-    win.on('blur', () => { if (['expanded','capsule'].includes(mode)&&!dialogOpen) win.webContents.send('expand', false); });
+    win.on('blur', () => { if (['expanded','capsule'].includes(mode)&&!dialogOpen&&!pinned) win.webContents.send('expand', false); });
     screen.on('display-metrics-changed', () => win.setBounds(bounds(mode)));
     const icon = nativeImage.createFromPath(path.join(__dirname,'assets','icon.png')).resize({width:20,height:20});
     tray = new Tray(icon); tray.setToolTip('Windows Island');
@@ -70,7 +74,8 @@ else {
     tray.on('click', () => win.webContents.send('expand', true));
     startServer();
     windows=new WindowsIntegration({app,onFullscreen:setBlocked,onNotification:(item,options)=>receiveNotification(item,options),onStatus:runtimeUpdate,onIcon:(source,icon)=>runtimeUpdate({icons:{...runtime.icons,[source]:icon}})});
-    windows.start();windows.configure(store.read().settings);
+    windows.start();windows.configure(store.read().settings);windows.setResourcesVisible(['capsule','expanded','toast','dragging'].includes(mode));
+    try{registerShortcut(store.read().settings.shortcut);}catch(error){runtimeUpdate({shortcutError:error.message});}
     powerMonitor.on('suspend',pauseRunning);
     const reminded = new Set();
     setInterval(() => { const now = Date.now(); store.read().events.forEach(e => { const delta = Date.parse(e.start)-now; if (delta >= 0 && delta < 5*60000 && !reminded.has(e.id)) { reminded.add(e.id); notify('Скоро в календаре',e.title); } }); }, 30000).unref();
@@ -81,7 +86,7 @@ function bounds(value) {
   const w=Math.min(440,width-24);
   return { x:Math.round(x+(width-w)/2),y:y-12,width:w,height:Math.min(620,height+12) };
 }
-function setBlocked(fullscreen){const next=fullscreen&&store.read().settings.hideFullscreen;runtimeUpdate({fullscreen});if(blocked===next)return;blocked=next;win.webContents.send('overlay-blocked',blocked);if(blocked){mode='collapsed';win.hide();}else{win.setBounds(bounds('collapsed'));win.showInactive();}}
+function setBlocked(fullscreen){const next=shouldHide(store.read().settings,fullscreen,pinned);runtimeUpdate({fullscreen});if(blocked===next)return;blocked=next;win.webContents.send('overlay-blocked',blocked);if(blocked){mode='collapsed';windows?.setResourcesVisible(false);win.hide();}else{win.setBounds(bounds('collapsed'));win.showInactive();}}
 function receiveNotification(input,options={show:true,report:false}){
   if(input.transport==='system'&&!options.report){
     const item={...normalizeNotification(input),transient:true};
@@ -95,9 +100,11 @@ function receiveNotification(input,options={show:true,report:false}){
 }
 function notify(title, body) {return receiveNotification({title,body,source:'island',transport:'mcp'});}
 function act(action, input) {
-  const result = store.mutate(action,input);
+  const previous=registeredShortcut;
+  if(action==='settings.update'&&input.shortcut!==undefined)registerShortcut(input.shortcut);
+  let result;try{result=store.mutate(action,input);}catch(error){if(previous!==registeredShortcut)registerShortcut(previous);throw error;}
   if (action === 'settings.update' && typeof input.startup === 'boolean') app.setLoginItemSettings({openAtLogin:input.startup, path: process.env.PORTABLE_EXECUTABLE_FILE || app.getPath('exe'), args:app.isPackaged?[]:[app.getAppPath()]});
-  if(action==='settings.update'){refreshTray();windows?.configure(store.read().settings);setBlocked(runtime.fullscreen);}
+  if(action==='settings.update'){if(!store.read().settings.gamingOverlay)pinned=false;refreshTray();windows?.configure(store.read().settings);setBlocked(runtime.fullscreen);}
   win.webContents.send('state',readState());
   if (action === 'task.add'&&!input.source) notify('Новая задача',result.title);
   if (action === 'event.add') notify('Событие добавлено',result.title);
@@ -126,9 +133,12 @@ function mcpConfig() {
 }
 ipcMain.handle('read',()=>readState());
 ipcMain.handle('act',(_,action,input)=>act(action,input));
-ipcMain.on('resize',(_,value)=>{if(!['collapsed','mini','capsule','expanded','toast','dragging'].includes(value)||blocked)return;mode=value;if(['capsule','expanded'].includes(value)&&!win.isFocused())win.focus();});
-ipcMain.on('hit-region',(_,value)=>{const valid=r=>r&&['x','y','width','height','radius'].every(key=>Number.isFinite(r[key]));const clean=r=>({x:r.x,y:r.y,width:Math.max(0,Math.min(440,r.width)),height:Math.max(0,Math.min(620,r.height)),radius:Math.max(0,Math.min(100,r.radius))});if(!valid(value))return;hitRegion=clean(value);satellites=Array.isArray(value.satellites)?value.satellites.slice(0,2).filter(valid).map(clean):[];updateHitRegion();});
+ipcMain.on('resize',(_,value)=>{if(!['collapsed','mini','capsule','expanded','toast','dragging'].includes(value)||blocked)return;mode=value;windows?.setResourcesVisible(['capsule','expanded','toast','dragging'].includes(value));if((value==='expanded'||value==='capsule'&&!pinned)&&!win.isFocused())win.focus();});
+ipcMain.on('hit-region',(_,value)=>{const valid=r=>r&&['x','y','width','height','radius'].every(key=>Number.isFinite(r[key]));const clean=r=>({x:r.x,y:r.y,width:Math.max(0,Math.min(440,r.width)),height:Math.max(0,Math.min(620,r.height)),radius:Math.max(0,Math.min(100,r.radius))});if(!valid(value))return;hitRegion=clean(value);satellites=Array.isArray(value.satellites)?value.satellites.slice(0,3).filter(valid).map(clean):[];updateHitRegion();});
 ipcMain.on('pointer-capture',(_,value)=>{pointerCaptured=value===true;updateHitRegion();});
+ipcMain.on('overlay-pin',(_,value)=>{pinned=value===true&&store.read().settings.gamingOverlay;setBlocked(runtime.fullscreen);});
+ipcMain.handle('shortcut',(_,value)=>{act('settings.update',{shortcut:value});return registeredShortcut;});
+ipcMain.handle('shortcut-capture',(_,value)=>{shortcutCapturing=value===true;if(shortcutCapturing){if(registeredShortcut)globalShortcut.unregister(registeredShortcut);}else try{registerShortcut(store.read().settings.shortcut);}catch(error){runtimeUpdate({shortcutError:error.message});}});
 ipcMain.handle('weather',weather);
 ipcMain.handle('check-updates',()=>updater.check());
 ipcMain.handle('download-update',()=>updater.download());
@@ -189,5 +199,5 @@ function startServer() {
   server.listen(PORT,'127.0.0.1',()=>fs.writeFileSync(connectionFile,JSON.stringify({url:`http://127.0.0.1:${PORT}`,token})));
 }
 function pauseRunning(){for(const task of store?.read().tasks||[])if(task.status==='running')store.mutate('task.pause',{id:task.id});if(win&&!win.isDestroyed())win.webContents.send('state',store.read());}
-app.on('before-quit',event=>{allowClose=true;if(windows&&!quitting){event.preventDefault();quitting=true;windows.stop();setTimeout(()=>app.quit(),500);return;}pauseRunning();server?.close();try{if(connectionFile)fs.unlinkSync(connectionFile);}catch{}});
+app.on('before-quit',event=>{globalShortcut.unregisterAll();allowClose=true;if(windows&&!quitting){event.preventDefault();quitting=true;windows.stop();setTimeout(()=>app.quit(),500);return;}pauseRunning();server?.close();try{if(connectionFile)fs.unlinkSync(connectionFile);}catch{}});
 app.on('window-all-closed',()=>app.quit());

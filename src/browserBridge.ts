@@ -1,14 +1,15 @@
 import {demo,demoState,demoWeather} from './demo';
 import type {State,Bridge,Task,CalendarEvent} from './bridge';
-const defaults:State = {tasks:[],events:[],notifications:[],agentReports:[],settings:{language:'ru',reportFolder:'',tasksEnabled:true,weatherEnabled:true,batteryNotifications:true,wifiNotifications:true,vpnNotifications:true,city:'Астрахань',latitude:46.35,longitude:48.04,startup:false,glass:true,autoContrast:true,quiet:false,greeting:true,nativeNotifications:true,islandOnly:true,hideFullscreen:true,systemNotifications:true,mediaControls:true}};
+const defaults:State = {tasks:[],events:[],notifications:[],agentReports:[],settings:{shortcut:'Shift+F1',gamingOverlay:false,language:'ru',reportFolder:'',tasksEnabled:true,weatherEnabled:true,batteryNotifications:true,wifiNotifications:true,vpnNotifications:true,city:'Астрахань',latitude:46.35,longitude:48.04,startup:false,glass:true,autoContrast:true,quiet:false,greeting:true,nativeNotifications:true,islandOnly:true,hideFullscreen:true,systemNotifications:true,mediaControls:true}};
 const listeners = new Map<string,Set<(data:any)=>void>>();
 const emit = (channel:string,data:unknown) => listeners.get(channel)?.forEach(fn=>fn(data));
 const storageKey=demo?'windows-island-demo':'windows-island';
-const read = () => {try{const data=JSON.parse(localStorage.getItem(storageKey)||'null');return data?{...structuredClone(defaults),...data,settings:{...defaults.settings,...data.settings}}:(demo?demoState(structuredClone(defaults.settings)):structuredClone(defaults));}catch{return structuredClone(defaults);}};
+const withDemoResources=(state:State)=>{if(demo)state.runtime={...state.runtime!,resources:state.settings.gamingOverlay?{updatedAt:new Date().toISOString(),cpu:24,gpu:72,cpuTemp:58,gpuTemp:65,fps:120,ramUsed:8.6,ramTotal:16,ramPercent:54}:null};return state;};
+const read = () => {try{const data=JSON.parse(localStorage.getItem(storageKey)||'null');return withDemoResources(data?{...structuredClone(defaults),...data,settings:{...defaults.settings,...data.settings}}:(demo?demoState(structuredClone(defaults.settings)):structuredClone(defaults)));}catch{return structuredClone(defaults);}};
 const api = async(url:string) => {const response=await fetch(url,{signal:AbortSignal.timeout(12000)});if(!response.ok)throw new Error('Сервис временно недоступен');return response.json();};
 export const browserBridge:Bridge = {
   checkUpdates:async()=>{throw new Error('Обновления доступны в Windows-приложении');},downloadUpdate:async()=>{throw new Error('Обновления доступны в Windows-приложении');},restartUpdate:async()=>{},
-  read:async()=>read(),resize:()=>{},hitRegion:()=>{},capture:()=>{},contextMenu:()=>{},
+  captureShortcut:async()=>{},pin:()=>{},setShortcut:async(value)=>{await browserBridge.act('settings.update',{shortcut:value});return value;},read:async()=>read(),resize:()=>{},hitRegion:()=>{},capture:()=>{},contextMenu:()=>{},
   mediaControl:async(action)=>{if(!demo)throw new Error('Управление музыкой доступно в Windows-приложении');const state=read();if(state.runtime?.media&&action==='toggle')state.runtime.media.playing=!state.runtime.media.playing;localStorage.setItem(storageKey,JSON.stringify(state));emit('state',state);},
   mediaSource:async()=>{throw new Error('Открыть плеер можно в Windows-приложении');},
   on:(channel,callback)=>{if(!listeners.has(channel))listeners.set(channel,new Set());listeners.get(channel)!.add(callback);return()=>{listeners.get(channel)?.delete(callback);};},
@@ -27,7 +28,7 @@ export const browserBridge:Bridge = {
     else if(action==='notifications.dismiss')state.notifications=state.notifications.filter(n=>!(input.ids as string[]).includes(n.id));
     else if(action==='event.add'){const event={...input,id:crypto.randomUUID(),source:'Вручную'} as CalendarEvent;state.events.push(event);result=event;}
     else if(action==='event.delete'){state.events=state.events.filter(e=>e.id!==input.id);}
-    localStorage.setItem(storageKey,JSON.stringify(state));emit('state',state);return result;
+    withDemoResources(state);localStorage.setItem(storageKey,JSON.stringify(state));emit('state',state);return result;
   },
   weather:async()=>{const s=read().settings;if(demo)return demoWeather(s.city);const d=await api(`https://api.open-meteo.com/v1/forecast?latitude=${s.latitude}&longitude=${s.longitude}&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=7`);return {temperature:Math.round(d.current.temperature_2m),code:d.current.weather_code,high:Math.round(d.daily.temperature_2m_max[0]),low:Math.round(d.daily.temperature_2m_min[0]),city:s.city,updatedAt:new Date().toISOString(),days:d.daily.time.slice(0,7).map((date:string,i:number)=>({date,code:d.daily.weather_code[i],high:Math.round(d.daily.temperature_2m_max[i]),low:Math.round(d.daily.temperature_2m_min[i]),precipitation:d.daily.precipitation_probability_max?.[i]??null}))};},
   cities:async(name)=> (await api(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=5&language=ru`)).results||[],
@@ -40,3 +41,5 @@ export const browserBridge:Bridge = {
   mcpConfig:async()=>JSON.stringify({mcpServers:{'windows-island':{command:'node',args:['C:\\Users\\user\\Desktop\\window-island\\mcp\\server.mjs']}}},null,2),
   copyConfig:async(text)=>navigator.clipboard.writeText(text)
 };
+
+if(__ISLAND_WEB__&&demo)setInterval(()=>{const state=read();if(state.settings.gamingOverlay)emit('runtime',state.runtime);},2000);
