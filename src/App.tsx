@@ -55,6 +55,8 @@ function App() {
     const restingAlpha = Math.min(.96, Math.max(.42, useSpringValue(hovered ? .96 : .42)));
     const [weatherError, setWeatherError] = useState(''), [weatherLoading, setWeatherLoading] = useState(false);
     const weatherRequest = useRef(0);
+    const weatherRef=useRef(weather);weatherRef.current=weather;
+    const greetingBusy=useRef(false);greetingBusy.current=blocked||pinned||recordingActive;
     const leaving = useAnimatedTasks(state.tasks);
     const visibleTasks = state.tasks.filter(task => showDone ? task.status === 'done' : task.status !== 'done' || !!leaving[task.id]);
     const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined), motionRef = useRef(motion), booted = useRef(false);
@@ -100,21 +102,37 @@ function App() {
     } }
     useEffect(() => {
         let active = true;
+        let greetingTimer:ReturnType<typeof setTimeout>|undefined;
+        const greetingStarted=Date.now();let greetingStage=0;
+        function greet(){
+            const current=stateRef.current;
+            if(!active||!current.settings.greeting||current.settings.quiet||Date.now()-greetingStarted>300000)return;
+            if(greetingBusy.current||motionRef.current.isDragging()||motionRef.current.modeRef.current!=='collapsed'){greetingTimer=setTimeout(greet,1000);return;}
+            setLanguage(current.settings.language);
+            if(greetingStage===0){
+                const today=dateKey();const count=current.tasks.filter(task=>task.status!=='done'&&(!task.deadline||( /^\d{4}-\d{2}-\d{2}$/.test(task.deadline)?task.deadline:dateKey(new Date(task.deadline)))<=today)).length;
+                showNotification({...welcome,id:'startup-welcome',appName:'Ваш день',title:'Добро пожаловать!',body:current.settings.tasksEnabled?`${t('Задач на сегодня:')} ${count}`:t('Хорошего дня!'),kind:'greeting',transient:true,transport:'system'});
+                greetingStage=1;greetingTimer=setTimeout(greet,4500);return;
+            }
+            if(!current.settings.weatherEnabled)return;
+            const forecast=weatherRef.current;
+            const degrees=(value:number)=>`${value>0?'+':''}${value}°`;
+            let body=t('Не удалось получить прогноз.');
+            if(forecast&&forecast.city===current.settings.city){
+                const parts=[weatherLabel(forecast.days[0].code)];
+                if(forecast.periods?.day!=null)parts.push(`${t('Днём')} ${degrees(forecast.periods.day)}`);
+                if(forecast.periods?.evening!=null)parts.push(`${t('Вечером')} ${degrees(forecast.periods.evening)}`);
+                if(forecast.periods?.day==null&&forecast.periods?.evening==null)parts.push(`${t('Максимум')} ${degrees(forecast.high)}, ${t('минимум')} ${degrees(forecast.low)}`);
+                body=parts.join(' · ');
+            }
+            showNotification({...welcome,id:'startup-weather',appName:'Ваш день',title:`${t('Погода сегодня')} · ${current.settings.city}`,body,kind:'greeting-weather',transient:true,transport:'system'});
+        }
         const off = [bridge.on('state', (value: State) => setState(value)), bridge.on('runtime', (runtime: State['runtime']) => setState(current => ({ ...current, runtime }))), bridge.on('notification', showNotification), bridge.on('expand', (value) => { motionRef.current.finish(true); changeMode(value === false ? 'collapsed' : 'expanded', true); }), bridge.on('overlay-blocked', (value) => { setBlocked(value); motionRef.current.finish(true); changeMode('collapsed'); })];
-        bridge.read().then(async (data) => { if (!active)
-            return; setState(data); stateRef.current = data; const forecast = data.settings.weatherEnabled ? await loadWeather() : null; if (!active)
-            return; if (native && data.settings.greeting && !data.settings.quiet && !booted.current) {
-            booted.current = true;
-            const count = data.events.filter(e => dateKey(new Date(e.start)) === dateKey()).length;
-            setLanguage(data.settings.language);
-            const summary=count?t('Сегодня событий: ')+count:t('Сегодня событий нет');
-            const forecastSummary=data.settings.weatherEnabled?(forecast?`${forecast.city}, ${forecast.temperature}°, ${weatherLabel(forecast.code).toLowerCase()}`:t('Погода недоступна')):'';
-            showNotification({...welcome,body:[summary,forecastSummary].filter(Boolean).join(' · ')});
-        } }).catch(e => setError(e.message));
+        bridge.read().then((data) => { if (!active)return;setState(data);stateRef.current=data;void loadWeather();if(native&&!booted.current){booted.current=true;greetingTimer=setTimeout(greet,20000);} }).catch(e => setError(e.message));
         const resize = () => setViewport(window.innerWidth);
         window.addEventListener('resize', resize);
         const refresh = setInterval(loadWeather, 1800000);
-        return () => { active = false; off.forEach(fn => fn()); window.removeEventListener('resize', resize); clearInterval(refresh); clearTimeout(closeTimer.current); clearTimeout(transientTimer.current); };
+        return () => { active = false; off.forEach(fn => fn()); window.removeEventListener('resize', resize); clearInterval(refresh); clearTimeout(greetingTimer);clearTimeout(closeTimer.current); clearTimeout(transientTimer.current); };
     }, []);
     useEffect(() => { if (!state.settings.tasksEnabled && tab === 'today') {
         setTab('notifications');
@@ -251,7 +269,7 @@ function App() {
         }
         catch (e) {
             setError((e as Error).message);
-        } }}><input aria-label={t("Город")} placeholder={t("Название города")} minLength={2} required value={city} onChange={e => setCity(e.target.value)}/><button>{t("Сохранить")}</button></form></label>{([{key:'agentIndicators',label:t('Индикаторы работы ИИ')},{ key:'toolsEnabled',label:t('Инструменты')},{key:'clipboardNotifications',label:t('Уведомления о копировании')},{ key: 'tasksEnabled', label: t("Задачи и учёт времени") }, { key: 'weatherEnabled', label: t("Погода") }, { key: 'batteryNotifications', label: t("Батарея и зарядка") }, { key: 'wifiNotifications', label: t("События Wi-Fi") }, { key: 'vpnNotifications', label: t("События VPN") }, { key: 'quiet', label: t("Не беспокоить") }, { key: 'greeting', label: t("Сводка при запуске") }, { key: 'startup', label: t("Запуск вместе с Windows") }, { key: 'nativeNotifications', label: t("Уведомления Windows") }, { key: 'islandOnly', label: t("Уведомления только в Island") }, { key: 'hideFullscreen', label: t("Скрывать в полноэкранном режиме") }, { key: 'systemNotifications', label: t("Системные уведомления") }, { key: 'mediaControls', label: t("Управление музыкой") }] as const).map(item => <div className="setting-row" key={item.key}><span>{item.label}</span><button role="switch" aria-label={item.label} aria-checked={state.settings[item.key]} className={`toggle ${state.settings[item.key] ? 'on' : ''}`} onClick={() => act('settings.update', { [item.key]: !state.settings[item.key] })}><span /></button></div>)}<button className="text-action" onClick={() => bridge.notificationSettings().catch(e => setError(e.message))}>{t("Настройки уведомлений Windows")}<ArrowUpRight size={12}/></button><small className="runtime-info">{state.runtime?.notifications === 'ready' ? t("Уведомления Windows подключены") : state.runtime?.error || t("Подключение уведомлений Windows…")}</small><UpdateSettings />{state.settings.tasksEnabled && <button className="text-action" onClick={report} disabled={busy}>{busy ? <LoaderCircle size={14}/> : <FileText size={14}/>}{t("Отчёт дня")}</button>}<div className="settings-footer"><small>Windows Island 0.3.6</small></div></>}
+        } }}><input aria-label={t("Город")} placeholder={t("Название города")} minLength={2} required value={city} onChange={e => setCity(e.target.value)}/><button>{t("Сохранить")}</button></form></label>{([{key:'agentIndicators',label:t('Индикаторы работы ИИ')},{ key:'toolsEnabled',label:t('Инструменты')},{key:'clipboardNotifications',label:t('Уведомления о копировании')},{ key: 'tasksEnabled', label: t("Задачи и учёт времени") }, { key: 'weatherEnabled', label: t("Погода") }, { key: 'batteryNotifications', label: t("Батарея и зарядка") }, { key: 'wifiNotifications', label: t("События Wi-Fi") }, { key: 'vpnNotifications', label: t("События VPN") }, { key: 'quiet', label: t("Не беспокоить") }, { key: 'greeting', label: t("Сводка при запуске") }, { key: 'startup', label: t("Запуск вместе с Windows") }, { key: 'nativeNotifications', label: t("Уведомления Windows") }, { key: 'islandOnly', label: t("Уведомления только в Island") }, { key: 'hideFullscreen', label: t("Скрывать в полноэкранном режиме") }, { key: 'systemNotifications', label: t("Системные уведомления") }, { key: 'mediaControls', label: t("Управление музыкой") }] as const).map(item => <div className="setting-row" key={item.key}><span>{item.label}</span><button role="switch" aria-label={item.label} aria-checked={state.settings[item.key]} className={`toggle ${state.settings[item.key] ? 'on' : ''}`} onClick={() => act('settings.update', { [item.key]: !state.settings[item.key] })}><span /></button></div>)}<button className="text-action" onClick={() => bridge.notificationSettings().catch(e => setError(e.message))}>{t("Настройки уведомлений Windows")}<ArrowUpRight size={12}/></button><small className="runtime-info">{state.runtime?.notifications === 'ready' ? t("Уведомления Windows подключены") : state.runtime?.error || t("Подключение уведомлений Windows…")}</small><UpdateSettings />{state.settings.tasksEnabled && <button className="text-action" onClick={report} disabled={busy}>{busy ? <LoaderCircle size={14}/> : <FileText size={14}/>}{t("Отчёт дня")}</button>}<div className="settings-footer"><small>Windows Island 0.3.7</small></div></>}
         </TabTransition></div><footer>{state.settings.weatherEnabled ? <button aria-label={tab === 'weather' ? t("Вернуться назад") : t("Погода")} onClick={() => { if (tab === 'weather')
             setTab(weatherBack.current);
         else {

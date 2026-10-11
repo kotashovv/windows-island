@@ -5,6 +5,7 @@ const { forecastUrl, normalizeWeather } = createRequire(import.meta.url)('../ele
 test('requests and normalizes all seven daily forecasts, keeping zero rain probability', () => {
   const url = new URL(forecastUrl({ latitude: 46.35, longitude: 48.04 }));
   assert.equal(url.searchParams.get('forecast_days'), '7');
+  assert.equal(url.searchParams.get('hourly'),'temperature_2m');
   assert.match(url.searchParams.get('daily'), /weather_code/);
   const forecast = normalizeWeather({ current: { temperature_2m: 18.7, weather_code: 2 }, daily: {
     time: Array.from({ length: 7 }, (_, i) => `2026-10-${10 + i}`),
@@ -14,6 +15,12 @@ test('requests and normalizes all seven daily forecasts, keeping zero rain proba
   assert.equal(forecast.temperature, 19); assert.equal(forecast.city, 'Астрахань');
   assert.equal(forecast.days.length, 7); assert.equal(forecast.days[0].precipitation, 0);
   assert.equal(forecast.days[6].code, 95);
+});
+test('greeting uses local hourly afternoon/evening forecasts, including zero and negative temperatures',()=>{
+  const daily={time:Array.from({length:7},(_,i)=>`2026-10-${10+i}`),weather_code:Array(7).fill(0),temperature_2m_max:Array(7).fill(15),temperature_2m_min:Array(7).fill(-5)};
+  const data={current:{temperature_2m:7,weather_code:0},daily,hourly:{time:['2026-10-11T14:00','2026-10-10T14:00','2026-10-10T19:00'],temperature_2m:[99,0,-2.4]}};
+  assert.deepEqual(normalizeWeather(data,'Город').periods,{date:'2026-10-10',day:0,evening:-2});
+  assert.deepEqual(normalizeWeather({...data,hourly:undefined},'Город').periods,{date:'2026-10-10',day:null,evening:null});
 });
 test('rejects malformed weather instead of displaying NaN temperatures', () => {
   assert.throws(() => normalizeWeather({}, 'Астрахань'), /недоступен/);

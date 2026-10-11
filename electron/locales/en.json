@@ -265,5 +265,14 @@
   "Удалить подключения индикаторов": "Remove activity integrations",
   "Индикаторы подключены. Перезапустите Claude. В Codex откройте /hooks и подтвердите новые обработчики.": "Indicators connected. Restart Claude. Open /hooks in Codex and review the new handlers.",
   "Подключения ИИ отключены. Перезапустите сессии агентов.": "AI integrations removed. Restart agent sessions.",
-  "Не удалось подключить индикаторы. Проверьте файлы настроек агентов.": "Could not connect indicators. Check agent configuration files."
+  "Не удалось подключить индикаторы. Проверьте файлы настроек агентов.": "Could not connect indicators. Check agent configuration files.",
+  "Добро пожаловать!": "Welcome!",
+  "Задач на сегодня:": "Tasks for today:",
+  "Хорошего дня!": "Have a good day!",
+  "Погода сегодня": "Today’s weather",
+  "Днём": "Afternoon",
+  "Вечером": "Evening",
+  "Максимум": "High",
+  "минимум": "low",
+  "Не удалось получить прогноз.": "Could not load the forecast."
 }
