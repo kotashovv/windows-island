@@ -4,7 +4,7 @@ const {shouldHide}=require('./overlay.cjs');
 const {RecordingFiles,validRegion}=require('./recording.cjs');
 let recorder,recordSource=null,regionWindow=null;
 const recordingBusy=()=>!!recorder?.active;
-function recordingChanged(value){runtimeUpdate({recording:value});refreshTray();if(!win||win.isDestroyed())return;win.webContents.setBackgroundThrottling(!recordingBusy());win.setContentProtection(recordingBusy());if(blocked){win.setOpacity(recordingBusy()?0:1);if(recordingBusy())win.showInactive();else win.hide();}}
+function recordingChanged(value){runtimeUpdate({recording:value});refreshTray();if(!win||win.isDestroyed())return;win.webContents.setBackgroundThrottling(!recordingBusy());win.setContentProtection(recordingBusy());updateBackdrop();if(blocked){win.setOpacity(recordingBusy()?0:1);if(recordingBusy())win.showInactive();else win.hide();}}
 async function captureSources(){const displays=screen.getAllDisplays();return (await desktopCapturer.getSources({types:['screen'],thumbnailSize:{width:0,height:0}})).map(source=>{const display=displays.find(item=>String(item.id)===source.display_id);return {id:source.id,name:source.name,width:display?Math.round(display.size.width*display.scaleFactor):0,height:display?Math.round(display.size.height*display.scaleFactor):0,displayId:source.display_id};});}
 function requireTools(event){if(event.sender!==win?.webContents||!store.read().settings.toolsEnabled)throw new Error('Инструменты отключены в настройках');}
 function requireRenderer(event){if(event.sender!==win?.webContents)throw new Error('Недопустимый запрос');}
@@ -40,6 +40,8 @@ function updateHitRegion(){
   const ignore=!pointerCaptured&&!inside;
   if(ignore!==ignoringMouse){ignoringMouse=ignore;win.setIgnoreMouseEvents(ignore,{forward:true});}
 }
+let backdropProgress=0,backdropStrength=0,backdropSent=false,backdropSignature='';
+function updateBackdrop(){if(!windows||!win||win.isDestroyed())return;const intensity=blocked||!win.isVisible()?0:backdropProgress*backdropStrength/100;if(intensity<=0&&!backdropSent)return;const value={type:'backdrop',hwnd:win.getNativeWindowHandle().readBigUInt64LE().toString(),scale:screen.getDisplayMatching(win.getBounds()).scaleFactor,region:hitRegion,satellites,intensity,protected:recordingBusy()};const signature=JSON.stringify(value);if(signature===backdropSignature)return;backdropSignature=signature;backdropSent=intensity>0;windows.send(value);}
 let windows,blocked=false,quitting=false,allowClose=false;
 function collapseWindow(){pinned=false;setBlocked(runtime.fullscreen);pointerCaptured=false;if(win&&!win.isDestroyed())win.webContents.send('expand',false);updateHitRegion();}
 let runtime={monitor:'starting',notifications:'starting',exclusive:false,fullscreen:false,icons:{}};
@@ -56,7 +58,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => win?.webContents.send('expand'));
   app.whenReady().then(async () => {
-    store = createStore(path.join(app.getPath('userData'), 'island.json'));
+    store = createStore(path.join(app.getPath('userData'), 'island.json'));backdropStrength=store.read().settings.backgroundBlur;
     Menu.setApplicationMenu(null);
     connectionFile = path.join(app.getPath('userData'), 'mcp-connection.json');
     if(app.isPackaged){const folder=path.join(app.getPath('userData'),'mcp');fs.mkdirSync(folder,{recursive:true});fs.copyFileSync(path.join(process.resourcesPath,'mcp','server.cjs'),path.join(folder,'server.cjs'));}
@@ -80,7 +82,7 @@ else {
     win.once('ready-to-show', () => win.showInactive());
     if (dev) await win.loadURL('http://127.0.0.1:5173'); else await win.loadFile(path.join(__dirname,'../dist/index.html'));
     win.on('blur', () => { if (['expanded','capsule'].includes(mode)&&!dialogOpen&&!pinned) win.webContents.send('expand', false); });
-    screen.on('display-metrics-changed', () => win.setBounds(bounds(mode)));
+    screen.on('display-metrics-changed', () => {win.setBounds(bounds(mode));backdropSignature='';updateBackdrop();});
     const icon = nativeImage.createFromPath(path.join(__dirname,'assets','icon.png')).resize({width:20,height:20});
     tray = new Tray(icon); tray.setToolTip('Windows Island');
     refreshTray();
@@ -99,7 +101,7 @@ function bounds(value) {
   const w=Math.min(440,width-24);
   return { x:Math.round(x+(width-w)/2),y:y-12,width:w,height:Math.min(620,height+12) };
 }
-function setBlocked(fullscreen){const next=shouldHide(store.read().settings,fullscreen,pinned);runtimeUpdate({fullscreen});if(blocked===next)return;blocked=next;win.webContents.send('overlay-blocked',blocked);if(blocked){mode='collapsed';windows?.setResourcesVisible(false);if(recordingBusy()){win.setOpacity(0);win.showInactive();win.setIgnoreMouseEvents(true,{forward:true});ignoringMouse=true;}else win.hide();}else{win.setOpacity(1);win.setBounds(bounds('collapsed'));win.showInactive();}}
+function setBlocked(fullscreen){const next=shouldHide(store.read().settings,fullscreen,pinned);runtimeUpdate({fullscreen});if(blocked===next){updateBackdrop();return;}blocked=next;updateBackdrop();win.webContents.send('overlay-blocked',blocked);if(blocked){mode='collapsed';windows?.setResourcesVisible(false);if(recordingBusy()){win.setOpacity(0);win.showInactive();win.setIgnoreMouseEvents(true,{forward:true});ignoringMouse=true;}else win.hide();}else{win.setOpacity(1);win.setBounds(bounds('collapsed'));win.showInactive();}}
 function receiveNotification(input,options={show:true,report:false}){
   if(input.transport==='system'&&!options.report){
     const item={...normalizeNotification(input),transient:true};
@@ -117,7 +119,7 @@ function act(action, input) {
   if(action==='settings.update'&&input.shortcut!==undefined)registerShortcut(input.shortcut);
   let result;try{result=store.mutate(action,input);}catch(error){if(previous!==registeredShortcut)registerShortcut(previous);throw error;}
   if (action === 'settings.update' && typeof input.startup === 'boolean') app.setLoginItemSettings({openAtLogin:input.startup, path: process.env.PORTABLE_EXECUTABLE_FILE || app.getPath('exe'), args:app.isPackaged?[]:[app.getAppPath()]});
-  if(action==='settings.update'){if(input.toolsEnabled===false)stopRecording();if(!store.read().settings.gamingOverlay)pinned=false;refreshTray();windows?.configure(store.read().settings);setBlocked(runtime.fullscreen);}
+  if(action==='settings.update'){backdropStrength=store.read().settings.backgroundBlur;if(input.toolsEnabled===false)stopRecording();if(!store.read().settings.gamingOverlay)pinned=false;refreshTray();windows?.configure(store.read().settings);setBlocked(runtime.fullscreen);}
   win.webContents.send('state',readState());
   if (action === 'task.add'&&!input.source) notify('Новая задача',result.title);
   if (action === 'event.add') notify('Событие добавлено',result.title);
@@ -147,7 +149,7 @@ function mcpConfig() {
 ipcMain.handle('read',()=>readState());
 ipcMain.handle('act',(_,action,input)=>act(action,input));
 ipcMain.on('resize',(_,value)=>{if(!['collapsed','mini','capsule','expanded','toast','dragging'].includes(value)||blocked)return;mode=value;windows?.setResourcesVisible(['capsule','expanded','toast','dragging'].includes(value));if((value==='expanded'||value==='capsule'&&!pinned)&&!win.isFocused())win.focus();});
-ipcMain.on('hit-region',(_,value)=>{const valid=r=>r&&['x','y','width','height','radius'].every(key=>Number.isFinite(r[key]));const clean=r=>({x:r.x,y:r.y,width:Math.max(0,Math.min(440,r.width)),height:Math.max(0,Math.min(620,r.height)),radius:Math.max(0,Math.min(100,r.radius))});if(!valid(value))return;hitRegion=clean(value);satellites=Array.isArray(value.satellites)?value.satellites.slice(0,3).filter(valid).map(clean):[];updateHitRegion();});
+ipcMain.on('hit-region',(_,value)=>{const valid=r=>r&&['x','y','width','height','radius'].every(key=>Number.isFinite(r[key]));const clean=r=>({x:r.x,y:r.y,width:Math.max(0,Math.min(440,r.width)),height:Math.max(0,Math.min(620,r.height)),radius:Math.max(0,Math.min(100,r.radius))});if(!valid(value))return;hitRegion=clean(value);satellites=Array.isArray(value.satellites)?value.satellites.slice(0,3).filter(valid).map(clean):[];if(Number.isFinite(value.blurStrength)&&value.blurStrength>=0&&value.blurStrength<=100)backdropStrength=value.blurStrength;backdropProgress=Number.isFinite(value.backdrop)?Math.max(0,Math.min(1,value.backdrop)):0;updateBackdrop();updateHitRegion();});
 ipcMain.on('pointer-capture',(_,value)=>{pointerCaptured=value===true;updateHitRegion();});
 ipcMain.on('overlay-pin',(_,value)=>{pinned=value===true&&store.read().settings.gamingOverlay;setBlocked(runtime.fullscreen);});
 ipcMain.handle('shortcut',(_,value)=>{act('settings.update',{shortcut:value});return registeredShortcut;});

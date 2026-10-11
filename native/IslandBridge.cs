@@ -162,6 +162,7 @@ class IslandBridge {
   static void ReadCommands(){try{string line;while(Running&&(line=Console.ReadLine())!=null){try{
     var input=Json.Deserialize<Dictionary<string,object>>(line);string type=Convert.ToString(input["type"]);
     if(type=="shutdown"){Running=false;break;}
+    if(type=="backdrop")BackdropBridge.Queue(input);
     if(type=="clipboard-baseline")ClipboardBridge.Baseline();
     if(type=="resources-visible")ResourceBridge.Visible=Convert.ToBoolean(input["visible"]);
     if(type=="configure"){ClipboardBridge.Configure(input.ContainsKey("clipboard")&&Convert.ToBoolean(input["clipboard"]));ResourceBridge.Enabled=input.ContainsKey("resources")&&Convert.ToBoolean(input["resources"]);PowerEnabled=!input.ContainsKey("power")||Convert.ToBoolean(input["power"]);WifiEnabled=!input.ContainsKey("wifi")||Convert.ToBoolean(input["wifi"]);FullscreenEnabled=!input.ContainsKey("fullscreen")||Convert.ToBoolean(input["fullscreen"]);SystemEnabled=Convert.ToBoolean(input["system"]);VpnEnabled=Convert.ToBoolean(input["vpn"]);MediaBridge.Enabled=Convert.ToBoolean(input["media"]);LastSystem="";}
@@ -179,6 +180,6 @@ class IslandBridge {
     try{if(File.Exists(BackupFile))Backup=Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(BackupFile));Restore();
       var reader=new Thread(ReadCommands);reader.IsBackground=true;reader.Start();var media=new Thread(MediaBridge.Run);media.IsBackground=true;media.Start();var resources=new Thread(ResourceBridge.Run);resources.IsBackground=true;resources.Start();bool? previous=null;int ticks=0;Icons();
       while(Running){try{ClipboardBridge.Poll();bool value=FullscreenEnabled&&Fullscreen();if(value!=previous){Emit(new {type="fullscreen",active=value});previous=value;}if(ticks++%8==0&&(SystemEnabled||VpnEnabled))SystemSnapshot();if(ticks%60==0){if(ParentPid>0){try{using(var parent=Process.GetProcessById(ParentPid)){if(parent.HasExited){Running=false;break;}}}catch(ArgumentException){Running=false;break;}}Icons();}}catch(Exception error){Emit(new {type="error",message=error.Message});}Thread.Sleep(250);}
-    }finally{try{Restore();}catch{}}
+    }finally{Running=false;BackdropBridge.Stop();try{Restore();}catch{}}
   }
 }

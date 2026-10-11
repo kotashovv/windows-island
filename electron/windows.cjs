@@ -14,6 +14,7 @@ class WindowsIntegration {
     this.child.on('error',error=>this.onStatus({monitor:'error',error:error.message}));
     this.child.on('exit',()=>{this.onStatus({monitor:'offline'});for(const item of this.pending.values())item(false);this.pending.clear();for(const item of this.mediaPending.values())item({ok:false,error:'Медиамост остановлен'});this.mediaPending.clear();});
     readline.createInterface({input:this.child.stdout}).on('line',async line=>{try{const event=JSON.parse(line);
+      if(event.type==='backdrop')this.onStatus({backdrop:event.status});
       if(event.type==='fullscreen'){this.fullscreen=event.active;this.onFullscreen(event.active);}
       if(event.type==='focus'){this.pending.get(event.id)?.(event.ok);this.pending.delete(event.id);}
       if(event.type==='clipboard'&&this.settings?.clipboardNotifications!==false){const title={'clipboard-text':'Скопирован отрывок','clipboard-image':'Изображение скопировано','clipboard-screenshot':'Скриншот сохранён в буфер обмена'}[event.kind];if(title)this.onNotification({source:'island',appName:'Буфер обмена',title,body:'',kind:event.kind,transport:'system'},{show:true});}

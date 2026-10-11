@@ -2,6 +2,14 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {createStore,reportMarkdown,dayKey} from '../electron/store.cjs';
+test('appearance defaults migrate and slider settings persist; malformed values cannot partially change settings',()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'island-appearance-'));try{
+  const file=path.join(dir,'state.json');fs.writeFileSync(file,JSON.stringify({settings:{language:'en'}}));const store=createStore(file);
+  assert.equal(store.read().settings.activeTransparency,0);assert.equal(store.read().settings.backgroundBlur,0);
+  for(const value of [-1,101,NaN,Infinity,'50',null]){const before=store.read();assert.throws(()=>store.mutate('settings.update',{quiet:true,activeTransparency:35,backgroundBlur:value}));assert.deepEqual(store.read(),before);}
+  store.mutate('settings.update',{activeTransparency:65,backgroundBlur:80});const saved=createStore(file).read();assert.equal(saved.settings.activeTransparency,65);assert.equal(saved.settings.backgroundBlur,80);assert.equal(saved.settings.language,'en');
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
 test('disabling tasks saves the active session, blocks task writes, preserves tasks across restart and re-enable',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'island-settings-'));try{
   const file=path.join(dir,'state.json'),store=createStore(file),task=store.mutate('task.add',{title:'Сохранить мои задачи',notes:'Русский текст пользователя'});

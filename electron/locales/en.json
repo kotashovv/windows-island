@@ -252,5 +252,11 @@
   "Не удалось записать видео": "Could not record video",
   "Пустая запись не сохранена": "Empty recording was not saved",
   "Не удалось сохранить запись": "Could not save recording",
-  "Ролик не найден": "Video was not found"
+  "Ролик не найден": "Video was not found",
+  "Прозрачность активной капсулы": "Active capsule transparency",
+  "Размытие фона": "Background blur",
+  "Внешний вид": "Appearance",
+  "Размывается фон под капсулой. Текст и иконки остаются чёткими.": "Blurs the background behind the capsule. Text and icons stay sharp.",
+  "Windows не предоставила размытие. Прозрачность продолжает работать.": "Windows did not provide backdrop blur. Transparency still works.",
+  "Не удалось сохранить внешний вид": "Could not save appearance"
 }

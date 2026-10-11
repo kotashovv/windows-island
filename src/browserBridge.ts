@@ -1,6 +1,6 @@
 import {demo,demoState,demoWeather} from './demo';
 import type {State,Bridge,Task,CalendarEvent} from './bridge';
-const defaults:State = {tasks:[],events:[],notifications:[],agentReports:[],settings:{clipboardNotifications:true,toolsEnabled:true,shortcut:'Shift+F1',gamingOverlay:false,language:'ru',reportFolder:'',tasksEnabled:true,weatherEnabled:true,batteryNotifications:true,wifiNotifications:true,vpnNotifications:true,city:'Астрахань',latitude:46.35,longitude:48.04,startup:false,glass:true,autoContrast:true,quiet:false,greeting:true,nativeNotifications:true,islandOnly:true,hideFullscreen:true,systemNotifications:true,mediaControls:true}};
+const defaults:State = {tasks:[],events:[],notifications:[],agentReports:[],settings:{activeTransparency:0,backgroundBlur:0,clipboardNotifications:true,toolsEnabled:true,shortcut:'Shift+F1',gamingOverlay:false,language:'ru',reportFolder:'',tasksEnabled:true,weatherEnabled:true,batteryNotifications:true,wifiNotifications:true,vpnNotifications:true,city:'Астрахань',latitude:46.35,longitude:48.04,startup:false,glass:true,autoContrast:true,quiet:false,greeting:true,nativeNotifications:true,islandOnly:true,hideFullscreen:true,systemNotifications:true,mediaControls:true}};
 const listeners = new Map<string,Set<(data:any)=>void>>();
 const emit = (channel:string,data:unknown) => listeners.get(channel)?.forEach(fn=>fn(data));
 const storageKey=demo?'windows-island-demo':'windows-island';
