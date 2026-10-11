@@ -176,6 +176,7 @@ class IslandBridge {
     // Explicit redirected streams work without allocating a Windows console host.
     Console.SetOut(new StreamWriter(Console.OpenStandardOutput(),new UTF8Encoding(false)){AutoFlush=true});
     Console.SetIn(new StreamReader(Console.OpenStandardInput(),new UTF8Encoding(false)));
+    if(args.Length>=2&&args[0]=="--activity"){ActivityHook.Run(args[1]);return;}
     ParentPid=args.Length>0?Int32.Parse(args[0]):0;string dir=args.Length>1?args[1]:Environment.CurrentDirectory;Directory.CreateDirectory(dir);BackupFile=Path.Combine(dir,"banner-backup.json");
     try{if(File.Exists(BackupFile))Backup=Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(BackupFile));Restore();
       var reader=new Thread(ReadCommands);reader.IsBackground=true;reader.Start();var media=new Thread(MediaBridge.Run);media.IsBackground=true;media.Start();var resources=new Thread(ResourceBridge.Run);resources.IsBackground=true;resources.Start();bool? previous=null;int ticks=0;Icons();

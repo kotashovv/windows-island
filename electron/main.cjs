@@ -18,6 +18,9 @@ const http = require('node:http');
 const {execFile}=require('node:child_process');
 const { randomBytes } = require('node:crypto');
 const { createStore, dayKey, reportMarkdown } = require('./store.cjs');
+const {AgentActivity}=require('./agent-activity.cjs');
+const {setupAgentHooks}=require('./agent-hooks.cjs');
+const os=require('node:os');
 const {WindowsIntegration}=require('./windows.cjs');
 const {validateTarget,normalizeNotification}=require('./notifications.cjs');
 const {forecastUrl,normalizeWeather}=require('./weather.cjs');
@@ -45,6 +48,8 @@ function updateBackdrop(){if(!windows||!win||win.isDestroyed())return;const inte
 let windows,blocked=false,quitting=false,allowClose=false;
 function collapseWindow(){pinned=false;setBlocked(runtime.fullscreen);pointerCaptured=false;if(win&&!win.isDestroyed())win.webContents.send('expand',false);updateHitRegion();}
 let runtime={monitor:'starting',notifications:'starting',exclusive:false,fullscreen:false,icons:{}};
+const activities=new AgentActivity(value=>runtimeUpdate({agentActivity:value}),Date.now,pid=>{try{process.kill(pid,0);return true;}catch(error){return error.code!=='ESRCH';}});
+setInterval(()=>activities.sweep(),1000).unref();
 const readState=()=>({...store.read(),runtime});
 function runtimeUpdate(change){const next={...runtime,...change};if(JSON.stringify(next)===JSON.stringify(runtime))return;runtime=next;if(win&&!win.isDestroyed())win.webContents.send('runtime',runtime);}
 const dev = process.argv.includes('--dev');
@@ -58,7 +63,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => win?.webContents.send('expand'));
   app.whenReady().then(async () => {
-    store = createStore(path.join(app.getPath('userData'), 'island.json'));backdropStrength=store.read().settings.backgroundBlur;
+    store = createStore(path.join(app.getPath('userData'), 'island.json'));backdropStrength=store.read().settings.backgroundBlur;activities.configure(store.read().settings.agentIndicators);
     Menu.setApplicationMenu(null);
     connectionFile = path.join(app.getPath('userData'), 'mcp-connection.json');
     if(app.isPackaged){const folder=path.join(app.getPath('userData'),'mcp');fs.mkdirSync(folder,{recursive:true});fs.copyFileSync(path.join(process.resourcesPath,'mcp','server.cjs'),path.join(folder,'server.cjs'));}
@@ -119,7 +124,7 @@ function act(action, input) {
   if(action==='settings.update'&&input.shortcut!==undefined)registerShortcut(input.shortcut);
   let result;try{result=store.mutate(action,input);}catch(error){if(previous!==registeredShortcut)registerShortcut(previous);throw error;}
   if (action === 'settings.update' && typeof input.startup === 'boolean') app.setLoginItemSettings({openAtLogin:input.startup, path: process.env.PORTABLE_EXECUTABLE_FILE || app.getPath('exe'), args:app.isPackaged?[]:[app.getAppPath()]});
-  if(action==='settings.update'){backdropStrength=store.read().settings.backgroundBlur;if(input.toolsEnabled===false)stopRecording();if(!store.read().settings.gamingOverlay)pinned=false;refreshTray();windows?.configure(store.read().settings);setBlocked(runtime.fullscreen);}
+  if(action==='settings.update'){activities.configure(store.read().settings.agentIndicators);backdropStrength=store.read().settings.backgroundBlur;if(input.toolsEnabled===false)stopRecording();if(!store.read().settings.gamingOverlay)pinned=false;refreshTray();windows?.configure(store.read().settings);setBlocked(runtime.fullscreen);}
   win.webContents.send('state',readState());
   if (action === 'task.add'&&!input.source) notify('Новая задача',result.title);
   if (action === 'event.add') notify('Событие добавлено',result.title);
@@ -146,6 +151,7 @@ function mcpConfig() {
   const script=app.isPackaged?path.join(app.getPath('userData'),'mcp','server.cjs'):path.join(app.getAppPath(),'mcp','server.mjs');
   return JSON.stringify({mcpServers:{'windows-island':{command:'node',args:[script],env:{WINDOWS_ISLAND_CONNECTION:connectionFile}}}},null,2);
 }
+ipcMain.handle('agent-hooks',async(event,remove)=>{requireRenderer(event);return setupAgentHooks({home:os.homedir(),profile:app.getPath('userData'),nativePath:app.isPackaged?path.join(process.resourcesPath,'native','IslandBridge.exe'):path.join(app.getAppPath(),'native','bin','IslandBridge.exe'),remove:remove===true});});
 ipcMain.handle('read',()=>readState());
 ipcMain.handle('act',(_,action,input)=>act(action,input));
 ipcMain.on('resize',(_,value)=>{if(!['collapsed','mini','capsule','expanded','toast','dragging'].includes(value)||blocked)return;mode=value;windows?.setResourcesVisible(['capsule','expanded','toast','dragging'].includes(value));if((value==='expanded'||value==='capsule'&&!pinned)&&!win.isFocused())win.focus();});
@@ -229,9 +235,9 @@ function startServer() {
       if(req.method!=='POST'||req.url!=='/action'){res.writeHead(404);return res.end('{}');}
       let body='';for await(const chunk of req){body+=chunk;if(Buffer.byteLength(body)>256000){res.writeHead(413);res.end('{}');req.destroy();return;}}
       const {action,input}=JSON.parse(body);
-      const allowed=['task.add','task.start','task.pause','task.complete','task.reopen','task.delete','tasks.import','event.add','event.delete','notification','agent.report','notification.read','notifications.read-all','report','weather'];
+      const allowed=['agent.activity','task.add','task.start','task.pause','task.complete','task.reopen','task.delete','tasks.import','event.add','event.delete','notification','agent.report','notification.read','notifications.read-all','report','weather'];
       if(!allowed.includes(action))throw new Error('Недопустимое действие');
-      const result=action==='notification'?receiveNotification(input):action==='agent.report'?receiveNotification(input,{report:true}):action==='report'?await writeReport():action==='weather'?await weather():act(action,input);
+      const result=action==='agent.activity'?activities.update(input):action==='notification'?receiveNotification(input):action==='agent.report'?receiveNotification(input,{report:true}):action==='report'?await writeReport():action==='weather'?await weather():act(action,input);
       res.end(JSON.stringify({result}));
     } catch(error) {res.writeHead(400);res.end(JSON.stringify({error:error.message}));}
   });

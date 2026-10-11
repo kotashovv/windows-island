@@ -258,5 +258,12 @@
   "Внешний вид": "Appearance",
   "Размывается фон под капсулой. Текст и иконки остаются чёткими.": "Blurs the background behind the capsule. Text and icons stay sharp.",
   "Windows не предоставила размытие. Прозрачность продолжает работать.": "Windows did not provide backdrop blur. Transparency still works.",
-  "Не удалось сохранить внешний вид": "Could not save appearance"
+  "Не удалось сохранить внешний вид": "Could not save appearance",
+  "Индикаторы работы ИИ": "AI activity indicators",
+  "Claude — оранжевое переливание. Codex — сине-голубое. Начало, ожидание ответа и завершение определяются событиями агента, без чтения переписки.": "Claude flows orange; Codex flows cyan-blue. Agent lifecycle events signal work, waiting and completion without reading conversations.",
+  "Подключить Claude и Codex": "Connect Claude and Codex",
+  "Удалить подключения индикаторов": "Remove activity integrations",
+  "Индикаторы подключены. Перезапустите Claude. В Codex откройте /hooks и подтвердите новые обработчики.": "Indicators connected. Restart Claude. Open /hooks in Codex and review the new handlers.",
+  "Подключения ИИ отключены. Перезапустите сессии агентов.": "AI integrations removed. Restart agent sessions.",
+  "Не удалось подключить индикаторы. Проверьте файлы настроек агентов.": "Could not connect indicators. Check agent configuration files."
 }

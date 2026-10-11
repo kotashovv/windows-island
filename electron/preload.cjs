@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('island', {
   captureShortcut: value => ipcRenderer.invoke('shortcut-capture',value),
   pin: value => ipcRenderer.send('overlay-pin',value),
   setShortcut: value => ipcRenderer.invoke('shortcut',value),
+  agentHooks:remove=>ipcRenderer.invoke('agent-hooks',remove),
   read: () => ipcRenderer.invoke('read'),
   act: (action, input) => ipcRenderer.invoke('act', action, input),
   resize: mode => ipcRenderer.send('resize', mode),
