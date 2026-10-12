@@ -80,7 +80,7 @@ try {
   assert.equal(await landing.locator('h1').count(), 1);
   assert.equal(await landing.locator('a', { hasText: 'Попробовать демо' }).getAttribute('href'), 'demo/?demo=1');
   assert.equal(await landing.locator('link[rel=canonical]').getAttribute('href'), 'https://kotashovv.github.io/windows-island/');
-  assert.equal(JSON.parse(await landing.locator('script[type="application/ld+json"]').textContent()).softwareVersion, '0.3.7');
+  assert.equal(JSON.parse(await landing.locator('script[type="application/ld+json"]').textContent()).softwareVersion, '0.3.8');
   await landing.screenshot({ path: 'artifacts/landing-desktop.png' });
   await landing.setViewportSize({ width: 375, height: 800 });
   assert.ok(await landing.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'landing must fit mobile screens');
