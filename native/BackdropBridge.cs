@@ -28,6 +28,10 @@ class BackdropBridge {
   [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h,int command);
   [DllImport("user32.dll")] static extern bool SetWindowCompositionAttribute(IntPtr h,ref Composition data);
   [DllImport("user32.dll")] static extern bool SetWindowDisplayAffinity(IntPtr h,uint affinity);
+  [DllImport("user32.dll")] static extern int SetWindowRgn(IntPtr h,IntPtr region,bool redraw);
+  [DllImport("gdi32.dll")] static extern IntPtr CreateRoundRectRgn(int left,int top,int right,int bottom,int width,int height);
+  [DllImport("gdi32.dll")] static extern int CombineRgn(IntPtr result,IntPtr a,IntPtr b,int mode);
+  [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr value);
   [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
   static readonly object Gate=new object();
   static Dictionary<string,object> Pending;
@@ -43,6 +47,8 @@ class BackdropBridge {
   internal static void Queue(Dictionary<string,object> value){lock(Gate){if(Worker==null&&Convert.ToDouble(value["intensity"])<=0)return;Pending=value;if(Worker==null){Worker=new Thread(Run);Worker.IsBackground=true;Worker.SetApartmentState(ApartmentState.STA);Worker.Start();}}Wake.Set();}
   static void Report(string status){if(status==Status)return;Status=status;IslandBridge.Emit(new {type="backdrop",status=status});}
   static double Number(Dictionary<string,object> v,string key){double n=Convert.ToDouble(v[key]);if(Double.IsNaN(n)||Double.IsInfinity(n))throw new ArgumentException();return n;}
+  static IntPtr InputRegion(Dictionary<string,object> value,double scale){double x=Number(value,"x")*scale,y=Number(value,"y")*scale,w=Number(value,"width")*scale,h=Number(value,"height")*scale,r=Math.Min(Number(value,"radius")*scale,Math.Min(w,h)/2);if(w<0||h<0||w>10000||h>10000||r<0)throw new ArgumentException();var region=CreateRoundRectRgn((int)Math.Floor(x),(int)Math.Floor(y),(int)Math.Ceiling(x+w),(int)Math.Ceiling(y+h),(int)Math.Round(r*2),(int)Math.Round(r*2));if(region==IntPtr.Zero)throw new InvalidOperationException();return region;}
+  static void ClipInput(List<Dictionary<string,object>> regions,double scale){IntPtr mask=InputRegion(regions[0],scale);try{for(int i=1;i<regions.Count;i++){var circle=InputRegion(regions[i],scale);try{if(CombineRgn(mask,mask,circle,2)==0)throw new InvalidOperationException();}finally{DeleteObject(circle);}}if(SetWindowRgn(Window,mask,true)==0)throw new InvalidOperationException();mask=IntPtr.Zero;}finally{if(mask!=IntPtr.Zero)DeleteObject(mask);}}
   static void Apply(Dictionary<string,object> value){
     double intensity=Number(value,"intensity");if(intensity<=0){if(Window!=IntPtr.Zero)ShowWindow(Window,0);Visible=false;return;}
     IntPtr target=new IntPtr(Int64.Parse(Convert.ToString(value["hwnd"])));uint pid;GetWindowThreadProcessId(target,out pid);
@@ -59,6 +65,9 @@ class BackdropBridge {
     SetWindowDisplayAffinity(Window,Convert.ToBoolean(value["protected"])?0x11u:0u);
     
     SetWindowPos(Window,target,bounds.Left,bounds.Top,bounds.Right-bounds.Left,bounds.Bottom-bounds.Top,0x0010|0x0040);
+    // HTTRANSPARENT only forwards within one thread. Exclude empty space from
+    // the actual HWND region so Windows routes clicks to other processes.
+    ClipInput(regions,scale);
     Visible=true;
     Report("ready");
   }

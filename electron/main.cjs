@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, shell, dialog, clipboard, powerMonitor, net, globalShortcut, desktopCapturer } = require('electron');
 const {installShortcut}=require('./shortcut.cjs');
+const {hitShape}=require('./hit-shape.cjs');
 const {shouldHide}=require('./overlay.cjs');
 const {RecordingFiles,validRegion}=require('./recording.cjs');
 let recorder,recordSource=null,regionWindow=null;
@@ -31,17 +32,12 @@ let dialogOpen=false;
 let mode = 'collapsed',pinned=false,registeredShortcut='',shortcutCapturing=false;
 function summon(){if(blocked)return;win.showInactive();win.webContents.send('expand',mode==='expanded'?false:true);}
 function registerShortcut(next){registeredShortcut=installShortcut(globalShortcut,registeredShortcut,next,summon);runtimeUpdate({shortcutError:''});return registeredShortcut;}
-let hitRegion={x:154,y:0,width:132,height:26,radius:18},satellites=[],pointerCaptured=false,ignoringMouse=false;
+let hitRegion={x:154,y:0,width:132,height:26,radius:18},satellites=[],pointerCaptured=false,ignoringMouse=false,shapeSignature='';
 function updateHitRegion(){
   if(!win||win.isDestroyed()||blocked)return;
-  const point=screen.getCursorScreenPoint(),origin=win.getBounds();
-  const inside=[hitRegion,...satellites].some(r=>{
-    const x=point.x-origin.x-r.x,y=point.y-origin.y-r.y,corner=Math.min(r.radius,r.width/2,r.height/2);
-    const dx=Math.max(corner-x,0,x-(r.width-corner)),dy=Math.max(corner-y,0,y-(r.height-corner));
-    return x>=0&&y>=0&&x<=r.width&&y<=r.height&&dx*dx+dy*dy<=corner*corner;
-  });
-  const ignore=!pointerCaptured&&!inside;
-  if(ignore!==ignoringMouse){ignoringMouse=ignore;win.setIgnoreMouseEvents(ignore,{forward:true});}
+  const bounds=win.getBounds(),shape=pointerCaptured?[]:hitShape([hitRegion,...satellites],bounds.width,bounds.height),signature=JSON.stringify(shape);
+  if(signature!==shapeSignature){win.setShape(shape);shapeSignature=signature;}
+  if(ignoringMouse){ignoringMouse=false;win.setIgnoreMouseEvents(false,{forward:true});}
 }
 let backdropProgress=0,backdropStrength=0,backdropSent=false,backdropSignature='';
 function updateBackdrop(){if(!windows||!win||win.isDestroyed())return;const intensity=blocked||!win.isVisible()?0:backdropProgress*backdropStrength/100;if(intensity<=0&&!backdropSent)return;const value={type:'backdrop',hwnd:win.getNativeWindowHandle().readBigUInt64LE().toString(),scale:screen.getDisplayMatching(win.getBounds()).scaleFactor,region:hitRegion,satellites,intensity,protected:recordingBusy()};const signature=JSON.stringify(value);if(signature===backdropSignature)return;backdropSignature=signature;backdropSent=intensity>0;windows.send(value);}
@@ -71,6 +67,7 @@ else {
     const position = bounds('collapsed');
     win = new BrowserWindow({ ...position, transparent: true, frame: false, resizable: false, maximizable: false, minimizable: false, skipTaskbar: true, show: false, hasShadow: false, backgroundColor: '#00000000', alwaysOnTop: true, webPreferences: { preload: path.join(__dirname,'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
     win.setAlwaysOnTop(true, 'screen-saver');
+    updateHitRegion();
     recorder=new RecordingFiles({folder:path.join(app.getPath('videos'),'Windows Island'),onState:value=>{recordingChanged(value);if(value.status==='idle')setImmediate(()=>recordingChanged(recorder.state));},onSaved:file=>{const item={...normalizeNotification({source:'island',appName:'Windows Island',title:'Ролик создан',body:file.name,kind:'recording-saved',transport:'system'}),transient:true,recordingId:file.id};if(!blocked&&!store.read().settings.quiet)win.webContents.send('notification',item);}});
     win.webContents.session.setDisplayMediaRequestHandler(async(request,callback)=>{const grant=recordSource;recordSource=null;if(!grant||request.frame!==win.webContents.mainFrame||!recordingBusy()||Date.now()>grant.expires){callback({});return;}try{const sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize:{width:0,height:0}});const video=sources.find(item=>item.id===grant.id);if(!video||!recordingBusy())throw new Error('Экран недоступен');callback({video,...(grant.audio?{audio:'loopback'}:{})});}catch{callback({});}});
     win.webContents.session.setPermissionRequestHandler((contents,permission,callback)=>callback(contents===win.webContents&&recordingBusy()&&['media','display-capture'].includes(permission)));
@@ -81,13 +78,12 @@ else {
     win.webContents.on('before-input-event',(event,input)=>{
       if(!shortcutCapturing&&input.type==='keyDown'&&((input.control&&!input.alt&&!input.meta&&input.key.toLowerCase()==='w')||(input.alt&&!input.control&&input.key==='F4'))){event.preventDefault();collapseWindow();}
     });
-    setInterval(updateHitRegion,32).unref();
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', (event) => event.preventDefault());
     win.once('ready-to-show', () => win.showInactive());
     if (dev) await win.loadURL('http://127.0.0.1:5173'); else await win.loadFile(path.join(__dirname,'../dist/index.html'));
     win.on('blur', () => { if (['expanded','capsule'].includes(mode)&&!dialogOpen&&!pinned) win.webContents.send('expand', false); });
-    screen.on('display-metrics-changed', () => {win.setBounds(bounds(mode));backdropSignature='';updateBackdrop();});
+    screen.on('display-metrics-changed', () => {win.setBounds(bounds(mode));shapeSignature='';updateHitRegion();backdropSignature='';updateBackdrop();});
     const icon = nativeImage.createFromPath(path.join(__dirname,'assets','icon.png')).resize({width:20,height:20});
     tray = new Tray(icon); tray.setToolTip('Windows Island');
     refreshTray();
@@ -106,7 +102,7 @@ function bounds(value) {
   const w=Math.min(440,width-24);
   return { x:Math.round(x+(width-w)/2),y:y-12,width:w,height:Math.min(620,height+12) };
 }
-function setBlocked(fullscreen){const next=shouldHide(store.read().settings,fullscreen,pinned);runtimeUpdate({fullscreen});if(blocked===next){updateBackdrop();return;}blocked=next;updateBackdrop();win.webContents.send('overlay-blocked',blocked);if(blocked){mode='collapsed';windows?.setResourcesVisible(false);if(recordingBusy()){win.setOpacity(0);win.showInactive();win.setIgnoreMouseEvents(true,{forward:true});ignoringMouse=true;}else win.hide();}else{win.setOpacity(1);win.setBounds(bounds('collapsed'));win.showInactive();}}
+function setBlocked(fullscreen){const next=shouldHide(store.read().settings,fullscreen,pinned);runtimeUpdate({fullscreen});if(blocked===next){updateBackdrop();return;}blocked=next;updateBackdrop();win.webContents.send('overlay-blocked',blocked);if(blocked){mode='collapsed';windows?.setResourcesVisible(false);if(recordingBusy()){win.setOpacity(0);win.showInactive();win.setIgnoreMouseEvents(true,{forward:true});ignoringMouse=true;}else win.hide();}else{win.setOpacity(1);win.setBounds(bounds('collapsed'));win.showInactive();shapeSignature='';updateHitRegion();}}
 function receiveNotification(input,options={show:true,report:false}){
   if(input.transport==='system'&&!options.report){
     const item={...normalizeNotification(input),transient:true};
